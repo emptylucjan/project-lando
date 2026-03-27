@@ -49,6 +49,7 @@ batch_results.json
 ldjson_dump.txt
 
 # Dane prywatne (maile, hasła, tokeny)
+ACCOUNTS.md
 mrowka/config.json
 bot_config.json
 config.json

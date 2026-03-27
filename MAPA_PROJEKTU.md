@@ -46,7 +46,7 @@
 | IMAP faktura — powiadomienie na #magazynierzy | `mrowka/mrowka_lib.py` | ✅ |
 | Parsowanie PDF faktury Zalando | `mrowka/invoice_parser.py` | ✅ |
 | `POST /api/pz/update-invoice` — NumerZewnetrzny + daty | backend | ✅ |
-| `POST /api/fz/create` — Faktura Zakupu powiązana z PZ | backend | ❌ |
+| `POST /api/fz/create` — Faktura Zakupu powiązana z PZ | backend | 🧪 czeka na test DC |
 | Handle label na #magazynierzy → PZ przyjęty | `mrowka/mrowka_bot.py` | ✅ |
 | `POST /api/pz/accept` — Status=20 + DataMagazynowa | backend | ✅ |
 | `!start_dostawy` / `!stop_dostawy` DM — sesja skanowania | `mrowka/mrowka_bot.py` | ✅ |
@@ -57,7 +57,7 @@
 
 | Funkcja | Priorytet | Uwagi |
 |---------|-----------|-------|
-| `POST /api/fz/create` — generowanie FZ powiązanego z PZ | **wysoki** | Sfera SDK — tworzenie Faktury Zakupu w Subiekcie |
+| `POST /api/fz/create` — FZ z poprawną datą, status=21 Odłożone, zapis pz_sygnatura | **wysoki** | ✅ zaimplementowane jako `CreateFZByPz` — **czeka na test DC** |
 | WhatsApp → Mrówka bridge | niski | Node.js bot przekazujący do Mrówki |
 | B2B Sklep → Mrówka bridge | niski | integracja z istniejącym sklepem |
 

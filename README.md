@@ -1,25 +1,25 @@
 # Vero Sport — Zalando Integration
 
-## 📋 Notatka: 2026-03-27, 09:04
+## 📋 Notatka: 2026-03-27, 20:46
 
 ### ✅ Co działa
 
 - **Scraper Zalando** — EAN, cena, rozmiary butów, odzieży, zakresów wzrostowych (`128-132`, `147-163` itp.), `One Size`; auto-discovery nowych formatów rozmiarów z JSON-LD
 - **CSV ticket** — format `LINK;CENA;LIMIT;[rozmiary]`, rozmiary jako dynamiczne kolumny nagłówka; obsługuje dowolny format rozmiaru
 - **Tworzenie PZ** (Przyjęcie Zewnętrzne) w Subiekcie Nexo przez Sfera CLI
-- **Tworzenie FZ** (Faktura Zakupu) w Subiekcie Nexo przez Sfera CLI
+- **Tworzenie FZ** (Faktura Zakupu) — poprawna data z PDF, status=21 Odłożone, PZ status=14 przywrócony
 - **Tworzenie ZK** (Zamówienie od Klienta) w Subiekcie Nexo przez Sfera CLI
 - **Parsowanie faktur PDF** — wyciąganie numeru FV, daty, SKU, cen z PDF Zalando
+- **UpdateInvoice** — NumerZewnetrzny + DataWydaniaWystawienia poprawnie ustawiane na PZ
+- **FZ przez Discord PDF** — `CreateFZByPz` działa produkcyjnie (data z PDF, status=21 Odłożone)
 
 ---
 
 ### ❌ Co nie działa / nie sprawdzone
 
-- **Parsowanie dat z faktury** — update daty w PZ/FZ z faktury PDF nie działa poprawnie
 - **Logika podwójnej paczki** — brak implementacji
 - **Wysyłanie faktur na Google Docs** — nie zaimplementowane
 - **Logika dostaw i odkładania paczek** — nie gotowe
-- **Aktualna logika dostaw** — nie sprawdzone czy zmiana statusu PZ/FZ z `O` (odłożone) na `P` (przyjęte) działa
 
 ---
 

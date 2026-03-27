@@ -1131,20 +1131,41 @@ namespace ReflectSfera
             if (!string.IsNullOrWhiteSpace(req.InvoiceDate) && DateTime.TryParse(req.InvoiceDate, out var parsedDate))
                 invoiceDate = parsedDate;
 
-            // 1. Znajdz PV przez sygnature
+            // 1. Znajdz PZ:
+            //    Tryb A: PzSygnatura to prawdziwy numer (np. "PV 57/2026") → szukaj po NumerWewnetrzny
+            //    Tryb B: PzSygnatura to orderName (np. "s3lukasz43-01") → szukaj po Uwagi LIKE
             int? pzId = null;
+            string usedSyg = req.PzSygnatura!;
             using (var conn = new SqlConnection(connStr))
             {
                 conn.Open();
-                using var cmd = new SqlCommand(
-                    "SELECT Id FROM ModelDanychContainer.Dokumenty WHERE NumerWewnetrzny_PelnaSygnatura=@syg", conn);
-                cmd.Parameters.AddWithValue("@syg", req.PzSygnatura);
-                var v = cmd.ExecuteScalar();
-                if (v != null && v != DBNull.Value) pzId = Convert.ToInt32(v);
+                // Tryb A: po sygnaturze
+                using (var cmd = new SqlCommand(
+                    "SELECT Id FROM ModelDanychContainer.Dokumenty WHERE NumerWewnetrzny_PelnaSygnatura=@syg", conn))
+                {
+                    cmd.Parameters.AddWithValue("@syg", req.PzSygnatura);
+                    var v = cmd.ExecuteScalar();
+                    if (v != null && v != DBNull.Value) pzId = Convert.ToInt32(v);
+                }
+                // Tryb B: fallback po Uwagi LIKE (gdy orderName przekazany jako PzSygnatura)
+                if (!pzId.HasValue)
+                {
+                    using var cmd2 = new SqlCommand(
+                        "SELECT TOP 1 Id, NumerWewnetrzny_PelnaSygnatura FROM ModelDanychContainer.Dokumenty " +
+                        "WHERE Uwagi LIKE @ord ORDER BY DataWprowadzenia DESC", conn);
+                    cmd2.Parameters.AddWithValue("@ord", $"%{req.PzSygnatura}%");
+                    using var r2 = cmd2.ExecuteReader();
+                    if (r2.Read())
+                    {
+                        pzId = r2.GetInt32(0);
+                        usedSyg = r2.IsDBNull(1) ? req.PzSygnatura! : r2.GetString(1);
+                    }
+                }
             }
             if (!pzId.HasValue)
-                return new CliResponse { Success = false, Message = $"Nie znaleziono PV: {req.PzSygnatura}" };
-            log.Append($"PV Id={pzId} | ");
+                return new CliResponse { Success = false, Message = $"Nie znaleziono PZ dla: {req.PzSygnatura}" };
+            log.Append($"PZ Id={pzId} syg={usedSyg} | ");
+
 
             // 2. Pobierz DokumentPZ z SDK przez Id
             var pzMgr = sfera.PodajObiektTypu<IPrzyjeciaZewnetrzne>();

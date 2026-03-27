@@ -620,6 +620,27 @@ def extract_product_data(driver, url: str, max_price: float = None) -> Optional[
                         if entry.get("ean"):
                             s["ean"] = entry["ean"]
 
+                # === AUTO-DISCOVERY: Dodaj rozmiary z JSON-LD których _extract_sizes nie wykrył ===
+                # Zalando JSON-LD zawiera WSZYSTKIE rozmiary w ich dokładnym formacie (128-132,
+                # One Size, itd.) — nie musimy dodawać ich do regex, działają automatycznie.
+                existing_size_names = {s["size"] for s in sizes}
+                for ld_size, ld_entry in ld_ean_map.items():
+                    if ld_size not in existing_size_names:
+                        ld_available = ld_entry.get("available", False)
+                        new_size = {
+                            "size": ld_size,
+                            "available": ld_available,
+                            "price": current_price,
+                            "low_stock": False,
+                            "price_is_red": False,
+                            "ean": ld_entry.get("ean"),
+                            "sku": ld_entry.get("sku"),
+                            "seller": "zalando",
+                            "accepted": ld_available and not is_multi_seller,
+                        }
+                        sizes.append(new_size)
+                        logger.info("JSON-LD auto-discovery: nowy rozmiar '%s' (available=%s)", ld_size, ld_available)
+
                 # Przebuduj accepted_sizes na podstawie zaktualizowanej dostępności
                 accepted_sizes = [s for s in sizes if s.get("accepted")]
                 logger.info("Po JSON-LD update: %d dostępnych rozmiarów", len(accepted_sizes))
@@ -1137,7 +1158,8 @@ def _extract_sizes(driver) -> list:
         # Read sizes from the dropdown - find spans with shoe size text
         sizes_data = driver.execute_script("""
             var sizes = [];
-            var sizeRegex = /^\d{2}([.,]\d{1,2})?(\s+\d+\/\d+)?$|^(XXX?L|XXXL|3XL|XXL|XL|XS|L|M|S)$/;
+            // Matches: shoe sizes (38, 38.5, 38 1/3), range sizes (128-132, 147-163), clothing (XS-XXXL), One Size
+            var sizeRegex = /^\d{2}([.,]\d{1,2})?(\s+\d+\/\d+)?$|^\d{2,3}-\d{2,3}$|^(XXX?L|XXXL|3XL|XXL|XL|XS|L|M|S)$|^[Oo]ne\s*[Ss]ize$|^[Jj]eden\s+[Rr]ozmiar$/;
             var allSpans = document.querySelectorAll('span');
             
             for (var i = 0; i < allSpans.length; i++) {
@@ -1168,7 +1190,7 @@ def _extract_sizes(driver) -> list:
                         
                         // Check if this element contains multiple size numbers
                         // If so, we've gone too far (into the list container)
-                        var sizeMatches = txt.match(/\b\d{2}([.,]\d{1,2})?(\s+\d+\/\d+)?\b|\b(XXX?L|XXXL|3XL|XXL|XL|XS|L|M|S)\b/g);
+                        var sizeMatches = txt.match(/\b\d{2}([.,]\d{1,2})?(\s+\d+\/\d+)?\b|\b\d{2,3}-\d{2,3}\b|\b(XXX?L|XXXL|3XL|XXL|XL|XS|L|M|S)\b|One\s*Size|Jeden\s+Rozmiar/gi);
                         if (sizeMatches && sizeMatches.length > 1) {
                             break;  // Stop! We're in the parent list container
                         }

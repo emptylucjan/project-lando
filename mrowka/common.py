@@ -73,6 +73,13 @@ def sorted_sizes(sizes: typing.Iterable[str]) -> list[str]:
             return 105
         if size == "XXL":
             return 106
+        # Range sizes like "128-132", "132-147", "147-163" — sort by first number
+        range_match = re.match(r'^(\d+)-(\d+)$', size)
+        if range_match:
+            return float(range_match.group(1)) + 200  # offset > clothing letters (106), below 9999
+        # One Size products
+        if re.match(r'^[Oo]ne\s*[Ss]ize$|^[Jj]eden\s+[Rr]ozmiar$', size):
+            return 500
         try:
             return float(size.replace(" 1/3", ".3").replace(" 2/3", ".6"))
         except Exception as e:

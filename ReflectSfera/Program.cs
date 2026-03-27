@@ -730,30 +730,21 @@ namespace ReflectSfera
             if (!string.IsNullOrWhiteSpace(req.Tracking)) updateCmd.Parameters.AddWithValue("@tracking", req.Tracking);
             updateCmd.ExecuteNonQuery();
 
-            // SDK: ustaw date faktury przez Sfera (DataFakturyDostawcy + DataOryginaluDokumentu)
+            // SQL: data faktury (DataWydaniaWystawienia = "Data oryginału" w GUI Subiektu)
+            // SDK failuje (MoznaZapisac=false dla PV/Odlozone) — uzywamy SQL bezposrednio
             string sdkDateResult = "brak daty";
             if (!string.IsNullOrWhiteSpace(req.InvoiceDate) && DateTime.TryParse(req.InvoiceDate, out var invoiceDate))
             {
                 try
                 {
-                    dynamic pzMgrDyn = GetManager(sfera, "IPrzyjeciaZewnetrzne");
-                    dynamic pzBO = null;
-                    if (pzMgrDyn != null)
-                        foreach (dynamic pzData in pzMgrDyn.Dane.Wszystkie())
-                            try { if ((int)pzData.Id == docId.Value) { pzBO = pzMgrDyn.Wczytaj(pzData); break; } } catch { }
-
-                    if (pzBO != null)
-                    {
-                        try { pzBO.Dane.DataFakturyDostawcy = invoiceDate; } catch { }
-                        try { pzBO.Dane.DataOryginaluDokumentu = invoiceDate; } catch { }
-                        try { pzBO.Przelicz(); } catch { }
-                        if (pzBO.MoznaZapisac) { pzBO.Zapisz(); sdkDateResult = $"data={invoiceDate:yyyy-MM-dd} ustawiona OK"; }
-                        else sdkDateResult = "MoznaZapisac=false po ustawieniu daty";
-                        try { ((IDisposable)pzBO).Dispose(); } catch { }
-                    }
-                    else sdkDateResult = "nie znaleziono PZ w SDK";
+                    using var dateCmd = new SqlCommand(
+                        "UPDATE ModelDanychContainer.Dokumenty SET DataWydaniaWystawienia = @dt WHERE Id = @id", conn);
+                    dateCmd.Parameters.AddWithValue("@dt", invoiceDate.Date);
+                    dateCmd.Parameters.AddWithValue("@id", docId.Value);
+                    dateCmd.ExecuteNonQuery();
+                    sdkDateResult = $"DataWydaniaWystawienia={invoiceDate:yyyy-MM-dd} OK (SQL)";
                 }
-                catch (Exception ex) { sdkDateResult = "blad SDK: " + ex.Message; }
+                catch (Exception ex) { sdkDateResult = "blad SQL daty: " + ex.Message; }
             }
 
             return new CliResponse { Success = true, Message = $"PZ {docId} zaktualizowany: FV={req.InvoiceNumber} | {sdkDateResult}" };

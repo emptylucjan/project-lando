@@ -1190,15 +1190,18 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
     else:
         logger.logger.warning("\u26a0\ufe0f update-invoice nie powiod\u0142o si\u0119 dla %s", order_name)
 
-    # 5. Utwórz FZ na podstawie istniejącego PZ (items=[] → C# pobiera z PZ)
-    fz_payload = {
-        "dostawcaNip": None,
-        "numerFakturyDostawcy": inv.invoice_number,
-        "invoiceDate": inv.invoice_date,
-        "orderName": order_name,
-        "items": [],
-    }
-    fz_result = await _subiekt_post("/api/fz/create", fz_payload, timeout=60)
+    # 5. Utwórz FZ na podstawie istniejącego PZ przez PzSygnatura (niezawodne)
+    # Używamy CreateFZByPz (alias TestFZ) — szuka PZ po sygnaturze, nie po Uwagach
+    pz_sig = _oi.pz_sygnatura if _oi else None
+    if not pz_sig:
+        logger.logger.warning("handle_faktura_pdf: brak pz_sygnatura dla %s — fallback na orderName", order_name)
+    fz_result = await _sfera_cli("CreateFZByPz", {
+        "CreateFzByPz": {
+            "PzSygnatura": pz_sig or order_name,
+            "InvoiceDate": inv.invoice_date,
+            "InvoiceNumber": inv.invoice_number,
+        }
+    }, timeout=90)
     if fz_result and (fz_result.get("Success") or fz_result.get("documentNumber")):
         fz_num = fz_result.get("DocumentNumber") or fz_result.get("documentNumber", "?")
         msg_fz = await reply_target.reply(

@@ -34,6 +34,7 @@ namespace ReflectSfera
         public ZkRequest? ZkData { get; set; }
         public UpdatePzRequest? UpdatePzData { get; set; }
         public TestFzRequest? TestFz { get; set; }
+        public TestFzRequest? CreateFzByPz { get; set; }  // alias produkcyjny — te same pola co TestFz
     }
 
     public class TestFzRequest
@@ -252,6 +253,11 @@ namespace ReflectSfera
                 else if (req.Action == "TestFZ" && req.TestFz != null)
                 {
                     return TestFZ(sfera, connStr, req.TestFz);
+                }
+                else if (req.Action == "CreateFZByPz" && req.CreateFzByPz != null)
+                {
+                    // Produkcyjny alias — ta sama logika co TestFZ (PzSygnatura-based)
+                    return TestFZ(sfera, connStr, req.CreateFzByPz);
                 }
                 else
                 {

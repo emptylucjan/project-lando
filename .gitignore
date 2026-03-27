@@ -1,0 +1,100 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Środowisko
+.env
+.venv
+venv/
+env/
+
+# Logi i śmieci debugowe
+*.log
+*.txt
+bot_err.txt
+bot_log.txt
+crash_log.txt
+backend_log.txt
+backend_err.txt
+err.txt
+monitor_log.txt
+build.log
+build_errors.txt
+build_full.txt
+
+# Pliki debug (tymczasowe)
+debug_*.html
+debug_*.json
+debug_*.png
+debug_*.txt
+full_test*.txt
+sku_*.txt
+json_*.txt
+page_text.txt
+scan_res*.txt
+pz_*.txt
+
+# Pliki wynikowe / testowe
+test_*.json
+test_*.txt
+p6000_*.json
+batch_results.json
+ldjson_dump.txt
+
+# Dane prywatne (maile, hasła, tokeny)
+mrowka/config.json
+bot_config.json
+config.json
+mrowka/storage/
+
+# SQLite
+*.sqlite
+*.db
+
+# PDF faktury
+*.pdf
+
+# Pliki tymczasowe
+*.tmp
+tmpoahpcrcc.json
+
+# C# build
+ReflectSfera/bin/
+ReflectSfera/obj/
+mrowka/bin/
+
+# Binarki
+*.exe
+*.dll
+ReflectSfera/build.log
+ReflectSfera/build.txt
+ReflectSfera/build_errors.txt
+ReflectSfera/build_errors_utf8.txt
+
+# Sfera DLLs (za duże, prywatne)
+sfera_dlls/
+
+# Pliki HTML (debug dumps)
+*.html
+!dashboard/**/*.html
+
+# Screenshoty
+*.png
+
+# Excel
+produkty.xlsx
+excelex/
+
+# Inne
+offers/
+images/
+dashboard/
+__pycache__/
+.gemini/

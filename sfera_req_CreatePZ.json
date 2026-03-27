@@ -1,0 +1,1 @@
+{"Action": "CreatePZ", "DbName": "Nexo_eleat teesty kurwa", "DbServer": ".\\INSERTNEXO", "SferaPassword": "", "PzData": {"dostawcaNip": "66639093114", "dostawcaEmail": null, "uwagi": "TEST PZ Mrowka - Zalando - BEZ BACKENDU", "numerFakturyDostawcy": "ZALA-TEST-002", "items": [{"ean": "5907529223437", "symbol": null, "quantity": 1, "cenaZakupu": 299.0}]}}

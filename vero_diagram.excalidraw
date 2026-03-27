@@ -1,0 +1,488 @@
+{
+  "type": "excalidraw",
+  "version": 2,
+  "source": "https://excalidraw.com",
+  "elements": [
+    {
+      "id": "sc",
+      "type": "rectangle",
+      "x": -350,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "backgroundColor": "#6c757d",
+      "strokeColor": "#00000060",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "sc_t"
+        }
+      ],
+      "text": ""
+    },
+    {
+      "id": "sc_t",
+      "type": "text",
+      "x": -350,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "text": "🕷️ Scraper Zalando\nEAN · ceny · rozmiary\npackshot",
+      "fontSize": 13,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#ffffff",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "hdr",
+      "type": "text",
+      "x": -300,
+      "y": -30,
+      "width": 1200,
+      "height": 40,
+      "text": "VERO SPORT — Architektura Systemu",
+      "fontSize": 22,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#212529",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "disc",
+      "type": "rectangle",
+      "x": 0,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "backgroundColor": "#5865F2",
+      "strokeColor": "#00000060",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "disc_t"
+        }
+      ],
+      "text": ""
+    },
+    {
+      "id": "disc_t",
+      "type": "text",
+      "x": 0,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "text": "🤖 Discord Bot\nMrówka\n✅ gotowy",
+      "fontSize": 13,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#ffffff",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "wa",
+      "type": "rectangle",
+      "x": 300,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "backgroundColor": "#25D366",
+      "strokeColor": "#00000060",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "wa_t"
+        }
+      ],
+      "text": ""
+    },
+    {
+      "id": "wa_t",
+      "type": "text",
+      "x": 300,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "text": "💬 WhatsApp Bot\n🔧 do zrobienia",
+      "fontSize": 13,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#ffffff",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "b2b",
+      "type": "rectangle",
+      "x": 600,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "backgroundColor": "#0077B6",
+      "strokeColor": "#00000060",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "b2b_t"
+        }
+      ],
+      "text": ""
+    },
+    {
+      "id": "b2b_t",
+      "type": "text",
+      "x": 600,
+      "y": 40,
+      "width": 200,
+      "height": 100,
+      "text": "🌐 B2B Sklep\nVero Sport\n✅ gotowy",
+      "fontSize": 13,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#ffffff",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "api",
+      "type": "rectangle",
+      "x": 110,
+      "y": 250,
+      "width": 480,
+      "height": 130,
+      "backgroundColor": "#7209b7",
+      "strokeColor": "#00000060",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "api_t"
+        }
+      ],
+      "text": ""
+    },
+    {
+      "id": "api_t",
+      "type": "text",
+      "x": 110,
+      "y": 250,
+      "width": 480,
+      "height": 130,
+      "text": "⚙️ Backend .NET — port 5051\nEnsureProduct · FindCustomer\nCreateZK · CreatePZ",
+      "fontSize": 14,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#ffffff",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "sub",
+      "type": "rectangle",
+      "x": 110,
+      "y": 460,
+      "width": 480,
+      "height": 130,
+      "backgroundColor": "#e76f51",
+      "strokeColor": "#00000060",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "roundness": {
+        "type": 3
+      },
+      "boundElements": [
+        {
+          "type": "text",
+          "id": "sub_t"
+        }
+      ],
+      "text": ""
+    },
+    {
+      "id": "sub_t",
+      "type": "text",
+      "x": 110,
+      "y": 460,
+      "width": 480,
+      "height": 130,
+      "text": "🗄️ Subiekt Nexo ERP\nAsortyment · ZK Zamówienie\nPZ Przyjęcie · FV Faktura",
+      "fontSize": 14,
+      "fontFamily": 1,
+      "textAlign": "center",
+      "verticalAlign": "middle",
+      "color": "#ffffff",
+      "backgroundColor": "transparent",
+      "strokeColor": "transparent",
+      "fillStyle": "solid",
+      "roughness": 0,
+      "opacity": 100,
+      "boundElements": []
+    },
+    {
+      "id": "a_sc_d",
+      "type": "arrow",
+      "x": -140,
+      "y": 90,
+      "width": 130,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          130,
+          0
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    },
+    {
+      "id": "a_sc_b",
+      "type": "arrow",
+      "x": -140,
+      "y": 110,
+      "width": 730,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          730,
+          0
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    },
+    {
+      "id": "a_wa_d",
+      "type": "arrow",
+      "x": 290,
+      "y": 75,
+      "width": 80,
+      "height": 0,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -80,
+          0
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    },
+    {
+      "id": "a_d_api",
+      "type": "arrow",
+      "x": 100,
+      "y": 145,
+      "width": 190,
+      "height": 100,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          190,
+          100
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    },
+    {
+      "id": "a_wa_api",
+      "type": "arrow",
+      "x": 400,
+      "y": 145,
+      "width": 50,
+      "height": 100,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -50,
+          100
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    },
+    {
+      "id": "a_b_api",
+      "type": "arrow",
+      "x": 700,
+      "y": 145,
+      "width": 290,
+      "height": 100,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          -290,
+          100
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    },
+    {
+      "id": "a_api_sub",
+      "type": "arrow",
+      "x": 350,
+      "y": 385,
+      "width": 0,
+      "height": 70,
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          70
+        ]
+      ],
+      "strokeColor": "#495057",
+      "backgroundColor": "transparent",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roughness": 0,
+      "opacity": 100,
+      "startArrowhead": null,
+      "endArrowhead": "arrow",
+      "boundElements": []
+    }
+  ],
+  "appState": {
+    "viewBackgroundColor": "#f8f9fa",
+    "currentItemFontFamily": 1,
+    "zoom": {
+      "value": 1
+    }
+  },
+  "files": {}
+}

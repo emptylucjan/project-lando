@@ -1,0 +1,1 @@
+{"Action": "EnsureProducts", "DbName": "Nexo_eleat teesty kurwa", "DbServer": ".\\INSERTNEXO", "SferaPassword": "", "EnsureProducts": [{"SKU": "ZALA-TEST-SKU", "EAN": "5907529223437", "Size": "42", "Brand": "Zalando", "ModelName": "Test Shirt"}]}

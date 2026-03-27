@@ -848,17 +848,20 @@ namespace ReflectSfera
                 throw new Exception($"Nie znaleziono PZ dla '{req.OrderName}' i brak items w req");
             }
 
-            // Nadpisz numer i daty z faktury PDF
+            // Nadpisz tylko NumerZewnetrzny przed Przelicz — daty MUSZA byc PO Przelicz
             if (!string.IsNullOrWhiteSpace(req.NumerFakturyDostawcy))
                 try { fz.Dane.NumerZewnetrzny = req.NumerFakturyDostawcy; } catch { }
+
+            try { fz.Przelicz(); } catch { }
+
+            // Ustaw daty faktury PO Przelicz() — Przelicz() resetuje je na dzisiaj
             if (!string.IsNullOrWhiteSpace(req.InvoiceDate) && DateTime.TryParse(req.InvoiceDate, out var invDate))
             {
                 try { fz.Dane.DataDokumentu = invDate; } catch { }
                 try { fz.Dane.DataFakturyDostawcy = invDate; } catch { }
                 try { fz.Dane.DataOryginaluDokumentu = invDate; } catch { }
             }
-            // Sprawdz czy mozna zapisac i zbierz bledy
-            try { fz.Przelicz(); } catch { }
+
             var preBledy = new System.Text.StringBuilder();
             bool mozna = false;
             try { mozna = (bool)fz.MoznaZapisac; } catch { }
@@ -901,6 +904,47 @@ namespace ReflectSfera
             }
 
             string sygFz = fz.Dane.NumerWewnetrzny.PelnaSygnatura;
+
+            // SQL: ustaw status FZ i PZ na Odlozone (14) — SDK automatycznie ustawia je na Zatwierdzone
+            if (!string.IsNullOrWhiteSpace(connStr))
+            {
+                try
+                {
+                    using var connReset = new SqlConnection(connStr);
+                    connReset.Open();
+
+                    // FZ: znajdz przez sygnature i ustaw StatusDokumentuId=14
+                    int? fzDocId = null;
+                    using (var findFz = new SqlCommand(
+                        "SELECT Id FROM ModelDanychContainer.Dokumenty WHERE NumerWewnetrzny_PelnaSygnatura=@syg",
+                        connReset))
+                    {
+                        findFz.Parameters.AddWithValue("@syg", sygFz);
+                        var v = findFz.ExecuteScalar();
+                        if (v != null && v != DBNull.Value) fzDocId = Convert.ToInt32(v);
+                    }
+                    if (fzDocId.HasValue)
+                    {
+                        using var fzStatus = new SqlCommand(
+                            "UPDATE ModelDanychContainer.Dokumenty SET StatusDokumentuId=14 WHERE Id=@id",
+                            connReset);
+                        fzStatus.Parameters.AddWithValue("@id", fzDocId.Value);
+                        fzStatus.ExecuteNonQuery();
+                    }
+
+                    // PZ: przywroc status Odlozone (WypelnijNaPodstawiePZ zmienilo na Przyjety)
+                    if (foundPzId.HasValue)
+                    {
+                        using var pzStatus = new SqlCommand(
+                            "UPDATE ModelDanychContainer.Dokumenty SET StatusDokumentuId=14 WHERE Id=@id",
+                            connReset);
+                        pzStatus.Parameters.AddWithValue("@id", foundPzId.Value);
+                        pzStatus.ExecuteNonQuery();
+                    }
+                }
+                catch { }
+            }
+
             try { ((IDisposable)fz).Dispose(); } catch { }
             return sygFz;
         }

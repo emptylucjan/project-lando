@@ -33,6 +33,14 @@ namespace ReflectSfera
         public FzRequest? FzData { get; set; }
         public ZkRequest? ZkData { get; set; }
         public UpdatePzRequest? UpdatePzData { get; set; }
+        public TestFzRequest? TestFz { get; set; }
+    }
+
+    public class TestFzRequest
+    {
+        public string? PzSygnatura { get; set; }  // np. "PV 57/2026"
+        public string? InvoiceDate { get; set; }   // np. "2026-03-19"
+        public string? InvoiceNumber { get; set; } // np. "FV-TEST-123"
     }
 
     public class EnsureProductRequest
@@ -240,6 +248,10 @@ namespace ReflectSfera
                 {
                     var msg = UpdatePzPositions(sfera, connStr, req.UpdatePzData);
                     return new CliResponse { Success = true, Message = msg };
+                }
+                else if (req.Action == "TestFZ" && req.TestFz != null)
+                {
+                    return TestFZ(sfera, connStr, req.TestFz);
                 }
                 else
                 {
@@ -925,8 +937,10 @@ namespace ReflectSfera
                     }
                     if (fzDocId.HasValue)
                     {
+                        // Status 21 = "Odlozenie przyjecia towaru i odebrania uslug" — wlasciwy Odlozone dla FZ
+                        // (Status 14 = Odlozone przyjecie towaru — to status PZ, nie FZ)
                         using var fzStatus = new SqlCommand(
-                            "UPDATE ModelDanychContainer.Dokumenty SET StatusDokumentuId=14 WHERE Id=@id",
+                            "UPDATE ModelDanychContainer.Dokumenty SET StatusDokumentuId=21 WHERE Id=@id",
                             connReset);
                         fzStatus.Parameters.AddWithValue("@id", fzDocId.Value);
                         fzStatus.ExecuteNonQuery();
@@ -1099,6 +1113,152 @@ namespace ReflectSfera
             try { ((IDisposable)pz).Dispose(); } catch { }
 
             return $"Zaktualizowano {updated} pozycji w {req.PzSygnatura}";
+        }
+
+        static CliResponse TestFZ(Uchwyt sfera, string connStr, TestFzRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req.PzSygnatura))
+                return new CliResponse { Success = false, Message = "Brak PzSygnatura" };
+
+            var log = new System.Text.StringBuilder();
+            DateTime invoiceDate = DateTime.Today;
+            if (!string.IsNullOrWhiteSpace(req.InvoiceDate) && DateTime.TryParse(req.InvoiceDate, out var parsedDate))
+                invoiceDate = parsedDate;
+
+            // 1. Znajdz PV przez sygnature
+            int? pzId = null;
+            using (var conn = new SqlConnection(connStr))
+            {
+                conn.Open();
+                using var cmd = new SqlCommand(
+                    "SELECT Id FROM ModelDanychContainer.Dokumenty WHERE NumerWewnetrzny_PelnaSygnatura=@syg", conn);
+                cmd.Parameters.AddWithValue("@syg", req.PzSygnatura);
+                var v = cmd.ExecuteScalar();
+                if (v != null && v != DBNull.Value) pzId = Convert.ToInt32(v);
+            }
+            if (!pzId.HasValue)
+                return new CliResponse { Success = false, Message = $"Nie znaleziono PV: {req.PzSygnatura}" };
+            log.Append($"PV Id={pzId} | ");
+
+            // 2. Pobierz DokumentPZ z SDK przez Id
+            var pzMgr = sfera.PodajObiektTypu<IPrzyjeciaZewnetrzne>();
+            dynamic pzFound = null;
+            foreach (dynamic pz in pzMgr.Dane.Wszystkie())
+                try { if ((int)pz.Id == pzId.Value) { pzFound = pz; break; } } catch { }
+
+            if (pzFound == null)
+                return new CliResponse { Success = false, Message = $"SDK nie znalazlo PV Id={pzId} w IPrzyjeciaZewnetrzne" };
+            log.Append("PV w SDK znalezione | ");
+
+            // 3. Utworz FZ
+            dynamic fzMgr = GetManager(sfera, "IDokumentyZakupu");
+            if (fzMgr == null) return new CliResponse { Success = false, Message = "Brak IDokumentyZakupu" };
+
+            dynamic fz = fzMgr.UtworzFaktureZakupu();
+            log.Append("FZ utworzona | ");
+
+            // 4. WypelnijNaPodstawiePZ
+            var grupPars = new ParametryGrupowaniaDZ { MetodaGrupowaniaPozycji = MetodaGrupowaniaPozycji.BezKonsolidacji };
+            try
+            {
+                var pzArr = new DokumentPZ[] { (DokumentPZ)(object)pzFound };
+                fz.WypelnijNaPodstawiePZ(pzArr, (DokumentPZ)(object)pzFound, grupPars);
+                log.Append("WypelnijNaPodstawiePZ OK | ");
+            }
+            catch (Exception ex) { return new CliResponse { Success = false, Message = $"WypelnijNaPodstawiePZ fail: {ex.Message}" }; }
+
+            // 5. Ustaw numer faktury
+            if (!string.IsNullOrWhiteSpace(req.InvoiceNumber))
+                try { fz.Dane.NumerZewnetrzny = req.InvoiceNumber; } catch { }
+
+            // 6. Przelicz
+            try { fz.Przelicz(); log.Append("Przelicz OK | "); } catch (Exception ex) { log.Append($"Przelicz ERR:{ex.Message} | "); }
+
+            // 7. Ustaw daty PO Przelicz
+            try { fz.Dane.DataDokumentu = invoiceDate; } catch { }
+            try { fz.Dane.DataFakturyDostawcy = invoiceDate; } catch { }
+            try { fz.Dane.DataOryginaluDokumentu = invoiceDate; } catch { }
+
+            // Sprawdz daty po ustawieniu (przed zapisem)
+            string dataDok = "?"; string dataOryg = "?"; string dataFakt = "?";
+            try { dataDok = ((DateTime)fz.Dane.DataDokumentu).ToString("yyyy-MM-dd"); } catch { }
+            try { dataOryg = ((DateTime)fz.Dane.DataOryginaluDokumentu).ToString("yyyy-MM-dd"); } catch { }
+            try { dataFakt = ((DateTime)fz.Dane.DataFakturyDostawcy).ToString("yyyy-MM-dd"); } catch { }
+            log.Append($"DataDokumentu={dataDok} DataOryginal={dataOryg} DataFaktury={dataFakt} | ");
+
+            // 8. MoznaZapisac?
+            bool mozna = false;
+            var bledy = new System.Text.StringBuilder();
+            try { mozna = (bool)fz.MoznaZapisac; } catch { }
+            if (!mozna)
+            {
+                try { foreach (dynamic b in fz.Bledy) bledy.Append(b?.ToString()).Append("; "); } catch { }
+                try { ((IDisposable)fz).Dispose(); } catch { }
+                return new CliResponse { Success = false, Message = $"MoznaZapisac=false | {log} | Bledy: {bledy}" };
+            }
+
+            // 9. Zapisz
+            bool zapisano = false;
+            try { zapisano = fz.Zapisz(); } catch (Exception ex) { return new CliResponse { Success = false, Message = $"Zapisz ERR: {ex.Message} | {log}" }; }
+            if (!zapisano) return new CliResponse { Success = false, Message = $"Zapisz=false | {log}" };
+
+            string sygFz = fz.Dane.NumerWewnetrzny.PelnaSygnatura;
+            try { ((IDisposable)fz).Dispose(); } catch { }
+            log.Append($"FZ={sygFz} | ");
+
+            // 10. Sprawdz co jest w bazie po zapisie (daty + StatusDokumentuId)
+            string fzBazaInfo = "brak";
+            using (var conn2 = new SqlConnection(connStr))
+            {
+                conn2.Open();
+                using var findFz = new SqlCommand(
+                    "SELECT Id, StatusDokumentuId, DataWydaniaWystawienia, DataWprowadzenia FROM ModelDanychContainer.Dokumenty WHERE NumerWewnetrzny_PelnaSygnatura=@syg",
+                    conn2);
+                findFz.Parameters.AddWithValue("@syg", sygFz);
+                using var r = findFz.ExecuteReader();
+                if (r.Read())
+                {
+                    int fzDocId2 = r.GetInt32(0);
+                    int statusId = r.GetInt32(1);
+                    r.Close();
+
+                    // 11. SQL: ustaw DataWydaniaWystawienia = invoiceDate + reset status do 21 (Odlozenie dla FZ)
+                    using (var dtCmd = new SqlCommand(
+                        "UPDATE ModelDanychContainer.Dokumenty SET DataWydaniaWystawienia=@dt, StatusDokumentuId=21 WHERE Id=@id", conn2))
+                    {
+                        dtCmd.Parameters.AddWithValue("@dt", invoiceDate.Date);
+                        dtCmd.Parameters.AddWithValue("@id", fzDocId2);
+                        dtCmd.ExecuteNonQuery();
+                    }
+                    log.Append($"SQL DataWydaniaWystawienia={invoiceDate:yyyy-MM-dd} + Status=21 OK | ");
+
+                    // 12. Odczyt po UPDATE — prawdziwy stan bazy
+                    using var verCmd = new SqlCommand(
+                        "SELECT StatusDokumentuId, DataWydaniaWystawienia, DataWprowadzenia FROM ModelDanychContainer.Dokumenty WHERE Id=@id", conn2);
+                    verCmd.Parameters.AddWithValue("@id", fzDocId2);
+                    using var r2 = verCmd.ExecuteReader();
+                    if (r2.Read())
+                    {
+                        int statusId2 = r2.GetInt32(0);
+                        string dataWyd2 = r2.IsDBNull(1) ? "NULL" : r2.GetDateTime(1).ToString("yyyy-MM-dd");
+                        string dataWpr2 = r2.IsDBNull(2) ? "NULL" : r2.GetDateTime(2).ToString("yyyy-MM-dd");
+                        fzBazaInfo = $"Id={fzDocId2} Status={statusId2} DataWydania={dataWyd2} DataWprowadzenia={dataWpr2}";
+                    }
+                }
+            }
+
+            // 13. Przywroc status PV do Odlozone
+            using (var conn3 = new SqlConnection(connStr))
+            {
+                conn3.Open();
+                using var pzReset = new SqlCommand(
+                    "UPDATE ModelDanychContainer.Dokumenty SET StatusDokumentuId=14 WHERE Id=@id", conn3);
+                pzReset.Parameters.AddWithValue("@id", pzId.Value);
+                pzReset.ExecuteNonQuery();
+                log.Append("PV status=14 przywrocony | ");
+            }
+
+            return new CliResponse { Success = true, Message = $"{log} | BazaFZ: {fzBazaInfo}", DocumentNumber = sygFz };
         }
     }
 }

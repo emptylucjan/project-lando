@@ -1167,6 +1167,17 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                     )
                     continue
 
+                # Dedup — sprawdz czy ten mail juz przetwarzalismy
+                # Klucz: order_number (jesli dostepny) lub account (fallback)
+                dedup_key = info.order_number or account
+                if dedup_key in oi.confirmed_delivery_keys:
+                    logger.logger.info(
+                        "check_gmail_delivery_confirmed: %s — duplikat maila (key=%s), pomijam",
+                        oi.name, dedup_key
+                    )
+                    continue
+                oi.confirmed_delivery_keys.add(dedup_key)
+
                 # Zlicz potwierdzenie dostawy
                 oi.delivery_confirmations += 1
                 changed = True

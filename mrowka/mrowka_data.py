@@ -552,6 +552,19 @@ class MrowkaShoeCollection:
 
 
 @dataclasses.dataclass
+class ShipmentInfo:
+    """Informacje o jednej nadanej paczce (może być max 2 na zamówienie)."""
+    tracking: str
+    amount_pln: Optional[float]   # Kwota pobrania tej paczki
+    date_sent: Optional[str]      # Data nadania (z headera maila)
+    source_mail: str              # Konto gmail z którego przyszedł mail
+
+    def to_str(self) -> str:
+        amount_str = f"{self.amount_pln:.2f} PLN" if self.amount_pln else "?"
+        return f"[{self.tracking}] {amount_str}"
+
+
+@dataclasses.dataclass
 class MrowkaOrderItem:
     name: str
     ticket_name: str
@@ -570,6 +583,15 @@ class MrowkaOrderItem:
     name_surname: Optional[str] = None
     faktura: Optional[bool] = None
     pz_sygnatura: Optional[str] = None  # Sygnatura PZ w Subiekcie (np. PZ 7/2026)
+    shipments: list[ShipmentInfo] = dataclasses.field(default_factory=list)  # Lista nadanych przesyłek
+
+    def shipments_uwagi(self) -> str:
+        """Buduje tekst do pola Uwagi PZ opisujący nadane przesyłki."""
+        if not self.shipments:
+            return ""
+        n = len(self.shipments)
+        parts = " | ".join(s.to_str() for s in self.shipments)
+        return f"{n} przesylk{'a' if n == 1 else 'i'}: {parts}"
 
     def shoe_collection(self) -> MrowkaShoeCollection:
         sc = MrowkaShoeCollection()

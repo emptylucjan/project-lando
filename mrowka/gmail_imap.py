@@ -41,20 +41,22 @@ _INPOST_DISPATCH_SUBJECTS = [
 
 @dataclass
 class DeliveryInfo:
-    """Info wyciągnięte z maila dostawczego Zalando."""
+    """Info wyciągnięte z maila dostawczego Zalando lub InPost."""
     zalando_account: str       # np. eleatowskiedomeny+fiz10@gmail.com (z headera To:)
     gmail_base: str            # np. eleatowskiedomeny@gmail.com (konto do logowania IMAP)
     order_number: Optional[str]
     tracking: Optional[str]
     delivery_date: Optional[str]
     name_surname: Optional[str]
+    shipping_amount: Optional[float] = None  # Kwota przesyłki w PLN (z maila Zalando lub InPost)
 
     def __str__(self) -> str:
         return (
             f"DeliveryInfo(account={self.zalando_account}, "
             f"order={self.order_number}, tracking={self.tracking}, "
-            f"delivery={self.delivery_date})"
+            f"delivery={self.delivery_date}, amount={self.shipping_amount})"
         )
+
 
 
 @dataclass
@@ -212,7 +214,39 @@ def _extract_order_info(body: str, html: str, subject: str, to_header: str, gmai
         tracking=tracking,
         delivery_date=delivery_date,
         name_surname=full_name,
+        shipping_amount=_extract_shipping_amount_zalando(txt),
     )
+
+
+def _extract_shipping_amount_zalando(text: str) -> Optional[float]:
+    """Wyciaga kwote z plain text Zalando: 'Platnosc za przesylke wynosi X,XX zl'"""
+    # Przyklad: 'Platnosc za przesylke wynosi 737,60 zl'
+    m = re.search(
+        r'[Pp][\u015b]a[t\u0142][n\u0144]o[s\u015b][\u0107c][\s\S]{0,30}przesy[\u0142l]k[\u0119e]\s+wynosi\s+([\d\s]+[,\.]\d{2})\s*z[\u0142l]',
+        text, re.IGNORECASE
+    )
+    if not m:
+        # Fallback: szukaj po znormalizowanym tekście
+        import unicodedata as _ud
+        def _norm(s):
+            s = _ud.normalize('NFD', s)
+            return ''.join(c for c in s if not _ud.combining(c)).lower()
+        norm = _norm(text)
+        m2 = re.search(r'platnosc za przesylke wynosi\s+([\d\s]+[,\.]\d{2})\s*zl', norm)
+        if m2:
+            return _parse_amount(m2.group(1))
+        return None
+    return _parse_amount(m.group(1))
+
+
+def _parse_amount(amount_str: str) -> Optional[float]:
+    """Konwertuje '3 448,00' lub '3448.00' na float."""
+    try:
+        s = amount_str.strip().replace(' ', '').replace('\u00a0', '')
+        s = s.replace(',', '.')
+        return float(s)
+    except Exception:
+        return None
 
 
 def _extract_inpost_order_info(body: str, html: str, subject: str, to_header: str, gmail_base: str) -> DeliveryInfo:
@@ -242,7 +276,20 @@ def _extract_inpost_order_info(body: str, html: str, subject: str, to_header: st
         tracking=tracking,
         delivery_date=None,
         name_surname=None,
+        shipping_amount=_extract_shipping_amount_inpost(body + ' ' + html),
     )
+
+
+def _extract_shipping_amount_inpost(full_text: str) -> Optional[float]:
+    """Wyciaga 'Kwota pobrania' z HTML InPost (po usunieciu tagow)."""
+    # HTML stripped zawiera: 'Kwota pobrania \n 3 448,00 zl'
+    m = re.search(
+        r'Kwota\s+pobrania\s+([\d\s]+[,\.]\d{2})\s*z[\u0142l]',
+        full_text, re.IGNORECASE
+    )
+    if m:
+        return _parse_amount(m.group(1))
+    return None
 
 
 @_logger.try_log([])

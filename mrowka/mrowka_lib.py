@@ -77,6 +77,7 @@ async def _subiekt_post(endpoint: str, payload: dict, timeout: int = 30) -> Opti
         "/api/pz/update-invoice":  ("UpdateInvoice",  lambda p: {"UpdateInvoice": p}),
         "/api/pz/accept":           ("AcceptPZ",        lambda p: {"AcceptPz": p}),
         "/api/fz/create":           ("CreateFZ",        lambda p: {"FzData": p}),
+        "/api/pz/update-uwagi":     ("UpdatePzUwagi",   lambda p: {"UpdatePzUwagi": p}),
     }
     if endpoint not in ACTION_MAP:
         logger.logger.warning("_subiekt_post: nieznany endpoint %s", endpoint)
@@ -874,22 +875,25 @@ async def check_imap_invoice(bot: commands.Bot) -> None:
 async def check_gmail_delivery(bot: commands.Bot) -> None:
     """
     Sprawdza Gmail IMAP wszystkich kont w poszukiwaniu maili dostawczych
-    ('Twoja przesyłka zostanie dostarczona') i wyciąga tracking.
-    
-    Po znalezieniu trackingu:
-      1. Wywołuje /api/pz/update-tracking → wpisuje w PZ
-      2. Zmienia Discord status order_item na ZAMOWIENIE_WYSLANE
+    ('Twoja przesyłka zostanie dostarczona') i wyciąga tracking + kwotę.
+
+    Logika podwójnej paczki:
+      - Przy pierwszym mailu: jeśli |kwota_paczki - pz_total| <= 10 PLN
+        → jedna paczka → od razu ZAMOWIENIE_WYSLANE
+      - Jeśli różnica > 10 PLN → split shipment (max 2 paczki)
+        → czekaj na drugą paczkę, WYSLANE dopiero po niej
+      - Po każdej paczce: aktualizuj uwagi PZ o tracking i kwotę
+
     Tylko UNSEEN maile — po przetworzeniu oznacza jako przeczytane.
     """
+    SPLIT_TOLERANCE_PLN = 10.0  # max roznica miedzy kwota paczki a total PZ
+
     try:
-        # Użyj gotowego modułu gmail_imap
-        # Uruchom blokujące IMAP w osobnym wątku — nie blokuje event loop Discorda!
         deliveries = await asyncio.to_thread(gmail_imap.get_all_new_delivery_emails)
         if not deliveries:
             logger.logger.info("check_gmail_delivery: brak nowych maili dostawczych")
             return
 
-        # Odczytaj aktualny stan — mapowanie mail → order_item
         async with mrowka_data.PisarzMrowka.lock:
             data = await mrowka_data.PisarzMrowka.read(safe=False)
             mail_to_order: dict[str, "mrowka_data.MrowkaOrderItem"] = {}
@@ -901,56 +905,194 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
             changed = False
             for info in deliveries:
                 if not info.tracking:
-                    logger.logger.info("check_gmail_delivery: brak trackingu w mailu dla %s", info.zalando_account)
+                    logger.logger.info(
+                        "check_gmail_delivery: brak trackingu w mailu dla %s",
+                        info.zalando_account
+                    )
                     continue
 
                 logger.logger.info(
-                    "check_gmail_delivery: tracking=%s, konto=%s, zamówienie=%s",
-                    info.tracking, info.zalando_account, info.order_number
+                    "check_gmail_delivery: tracking=%s, konto=%s, kwota=%s PLN",
+                    info.tracking, info.zalando_account, info.shipping_amount
                 )
 
-                # Znajdź order_item po koncie Zalando
                 oi = mail_to_order.get(info.zalando_account.lower())
 
-                # 1. Update PZ tracking w Subiekcie — tylko gdy znamy order_item
-                # (stare maile bez oi w danych są pomijane — nie ma PZ do aktualizacji)
+                # 1. Update PZ tracking w Subiekcie
                 if oi:
-                    order_name = oi.name  # np. "s3lukasz17-01"
+                    order_name = oi.name
                     result = await _subiekt_post("/api/pz/update-tracking", {
                         "orderName": order_name,
                         "tracking": info.tracking,
                     })
                     if result and result.get("Success"):
-                        logger.logger.info("✅ update-tracking OK: %s → %s", order_name, info.tracking)
+                        logger.logger.info("update-tracking OK: %s -> %s", order_name, info.tracking)
                     else:
-                        logger.logger.warning("⚠️ update-tracking failed: orderName=%s", order_name)
+                        logger.logger.warning("update-tracking failed: orderName=%s", order_name)
                 else:
-                    logger.logger.info("check_gmail_delivery: konto %s nie pasuje do żadnego aktywnego zamówienia — pomijam update-tracking", info.zalando_account)
+                    logger.logger.info(
+                        "check_gmail_delivery: konto %s nie pasuje do zadnego aktywnego zamowienia",
+                        info.zalando_account
+                    )
 
+                if not oi:
+                    continue
 
-                # 2. Zapisz tracking i datę dostawy w order_item
-                if oi:
-                    oi.tracking = info.tracking
-                    if info.delivery_date:
-                        oi.delivery_date = info.delivery_date
-                    if info.order_number:
-                        oi.order_number = info.order_number
+                # 2. Zapisz tracking i date dostawy w order_item
+                oi.tracking = info.tracking
+                if info.delivery_date:
+                    oi.delivery_date = info.delivery_date
+                if info.order_number:
+                    oi.order_number = info.order_number
 
-                    # 3. Zmień Discord status na ZAMOWIENIE_WYSLANE
-                    # Wymuszamy bez sprawdzania next_statuses() —
-                    # ZAMOWIENIE_POTWIERDZONE nie ma WYSLANE w next_statuses, ale
-                    # mail od InPost/Zalando jest dowodem że paczka wyszła
-                    cur = oi.history.get_status()
-                    wyslane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_WYSLANE
-                    zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
-                    # Nie cofaj jeśli już WYSLANE lub ZREALIZOWANE
-                    if cur.status not in (wyslane, zrealizowane):
-                        await oi.change_status(bot, wyslane, cur.user, data)
-                        changed = True
-                        logger.logger.info(
-                            "check_gmail_delivery: %s → ZAMOWIENIE_WYSLANE (tracking=%s)",
-                            oi.name, info.tracking
+                # 3. Dodaj ShipmentInfo TYLKO z maila Zalando (ma order_number).
+                # Mail InPost dotyczy tej samej paczki co mail Zalando — gdybysmy
+                # dodali z obu, liczylibysmy jedna paczke dwa razy (np. 3100 + 3100).
+                # Wyroznik: Zalando mail ma order_number != None, InPost ma order_number = None.
+                is_zalando_mail = info.order_number is not None
+
+                if is_zalando_mail:
+                    # Deduplikacja po kwocie: jesli mamy juz ShipmentInfo z ta sama kwota
+                    # (tolerancja 1 PLN), nie dodajemy duplikatu
+                    existing_amounts = [s.amount_pln for s in oi.shipments if s.amount_pln is not None]
+                    amount_already_counted = any(
+                        abs((info.shipping_amount or 0) - a) <= 1.0
+                        for a in existing_amounts
+                    ) if info.shipping_amount and existing_amounts else False
+
+                    existing_trackings = {s.tracking for s in oi.shipments}
+
+                    if info.tracking not in existing_trackings and not amount_already_counted:
+                        import datetime as _dt
+                        shipment = mrowka_data.ShipmentInfo(
+                            tracking=info.tracking,
+                            amount_pln=info.shipping_amount,
+                            date_sent=_dt.datetime.now().strftime("%Y-%m-%d"),
+                            source_mail=info.gmail_base,
                         )
+                        oi.shipments.append(shipment)
+                        logger.logger.info(
+                            "check_gmail_delivery: [Zalando] dodano ShipmentInfo dla %s "
+                            "(kwota=%.2f PLN, paczka #%d)",
+                            oi.name,
+                            info.shipping_amount or 0.0,
+                            len(oi.shipments),
+                        )
+                    elif amount_already_counted:
+                        logger.logger.info(
+                            "check_gmail_delivery: [Zalando] pominiety duplikat ShipmentInfo dla %s "
+                            "(kwota=%.2f juz jest w liscie)",
+                            oi.name, info.shipping_amount or 0.0
+                        )
+                else:
+                    logger.logger.info(
+                        "check_gmail_delivery: [InPost] mail dla %s — tracking=%s "
+                        "(nie dodaje ShipmentInfo, ta paczka juz liczona z maila Zalando)",
+                        oi.name, info.tracking
+                    )
+
+                # 4. Aktualizuj uwagi PZ o przesylkach (przez sygnature PZ, jesli znana)
+                uwagi_shipments = oi.shipments_uwagi()
+                if uwagi_shipments and oi.pz_sygnatura:
+                    upd = await _subiekt_post("/api/pz/update-uwagi", {
+                        "PzSygnatura": oi.pz_sygnatura,
+                        "Uwagi": uwagi_shipments,
+                    })
+                    if upd and upd.get("Success"):
+                        logger.logger.info(
+                            "check_gmail_delivery: uwagi PZ zaktualizowane dla %s (%s): %s",
+                            oi.name, oi.pz_sygnatura, uwagi_shipments
+                        )
+                    else:
+                        logger.logger.warning(
+                            "check_gmail_delivery: blad zapisu uwagi PZ %s: %s",
+                            oi.pz_sygnatura, upd
+                        )
+                elif uwagi_shipments:
+                    logger.logger.info(
+                        "check_gmail_delivery: brak pz_sygnatura dla %s — pomijam zapis uwagi shipments",
+                        oi.name
+                    )
+
+                # 5. Sprawdz czy oznaczyc jako WYSLANE
+                cur = oi.history.get_status()
+                wyslane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_WYSLANE
+                zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
+
+                if cur.status in (wyslane, zrealizowane):
+                    continue  # juz wyslane, nie zmieniamy
+
+                pz_total = oi.price_total()
+                n_shipments = len(oi.shipments)
+
+                # Sprawdz czy to jedna czy dwie paczki na podstawie PIERWSZEJ paczki
+                first_amount = oi.shipments[0].amount_pln if oi.shipments else None
+
+                if first_amount is not None and pz_total > 0:
+                    diff = abs(first_amount - pz_total)
+                    is_single = diff <= SPLIT_TOLERANCE_PLN
+                else:
+                    # Brak kwoty — traktuj jako jedna paczka (bezpieczny default)
+                    is_single = True
+
+                should_mark_wyslane = False
+                if is_single:
+                    # Jedna paczka — od razu wyslane
+                    should_mark_wyslane = True
+                    logger.logger.info(
+                        "check_gmail_delivery: %s — JEDNA paczka (kwota=%.2f, total=%.2f, diff=%.2f) -> WYSLANE",
+                        oi.name, first_amount or 0, pz_total,
+                        abs((first_amount or 0) - pz_total)
+                    )
+                else:
+                    # Split shipment — czekaj az beda 2 paczki
+                    if n_shipments >= 2:
+                        should_mark_wyslane = True
+                        logger.logger.info(
+                            "check_gmail_delivery: %s — DWIE paczki odebrane -> WYSLANE "
+                            "(kwota1=%.2f, kwota2=%.2f, total=%.2f)",
+                            oi.name,
+                            oi.shipments[0].amount_pln or 0,
+                            oi.shipments[1].amount_pln or 0,
+                            pz_total,
+                        )
+                    else:
+                        # Pierwsza z dwoch paczek — powiadom Discord
+                        logger.logger.info(
+                            "check_gmail_delivery: %s — SPLIT SHIPMENT, pierwsza paczka "
+                            "(kwota=%.2f, total=%.2f, brakuje=%.2f PLN). Czekam na druga.",
+                            oi.name, first_amount or 0, pz_total,
+                            pz_total - (first_amount or 0)
+                        )
+                        # Wyslij powiadomienie na magazynierzy ze to split
+                        try:
+                            magazyn_channel = None
+                            for guild in bot.guilds:
+                                for ch in guild.text_channels:
+                                    if ch.name == MAGAZYNIERZY_CHANNEL:
+                                        magazyn_channel = ch
+                                        break
+                                if magazyn_channel:
+                                    break
+                            if magazyn_channel:
+                                await magazyn_channel.send(
+                                    f"📦 **Split shipment** — zamówienie `{oi.name}`\n"
+                                    f"Pierwsza paczka: `{info.tracking}` — {first_amount:.2f} PLN\n"
+                                    f"Wartość PZ: **{pz_total:.2f} PLN**\n"
+                                    f"Brakuje: **{pz_total - first_amount:.2f} PLN** (druga paczka w drodze)"
+                                )
+                        except Exception as _e:
+                            logger.logger.warning("check_gmail_delivery: blad powiadomienia split: %s", _e)
+                        changed = True  # zapisz stan (dodano ShipmentInfo)
+                        continue
+
+                if should_mark_wyslane:
+                    await oi.change_status(bot, wyslane, cur.user, data)
+                    changed = True
+                    logger.logger.info(
+                        "check_gmail_delivery: %s -> ZAMOWIENIE_WYSLANE (tracking=%s)",
+                        oi.name, info.tracking
+                    )
 
             if changed:
                 await mrowka_data.PisarzMrowka.write(data, safe=False)

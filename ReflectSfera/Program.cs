@@ -35,6 +35,7 @@ namespace ReflectSfera
         public UpdatePzRequest? UpdatePzData { get; set; }
         public TestFzRequest? TestFz { get; set; }
         public TestFzRequest? CreateFzByPz { get; set; }  // alias produkcyjny — te same pola co TestFz
+        public UpdatePzUwagiRequest? UpdatePzUwagi { get; set; }
     }
 
     public class TestFzRequest
@@ -75,6 +76,17 @@ namespace ReflectSfera
     {
         public string? OrderName { get; set; }
         public string? Tracking { get; set; }
+    }
+
+    /// <summary>
+    /// Aktualizuje pole Uwagi PZ bezposrednio po sygnaturze (np. "PV 54/2026").
+    /// Uzywane do wpisywania informacji o przesylkach (split shipment).
+    /// </summary>
+    public class UpdatePzUwagiRequest
+    {
+        public string? PzSygnatura { get; set; }  // np. "PV 54/2026" lub "PV54/2026"
+        public string? Uwagi { get; set; }         // pelna nowa tresc pola Uwagi (nadpisuje istniejace)
+        public string? UwagiAppend { get; set; }   // lub dopisz na koncu istniejacych Uwagi
     }
 
     public class UpdateInvoiceRequest
@@ -253,6 +265,10 @@ namespace ReflectSfera
                 else if (req.Action == "TestFZ" && req.TestFz != null)
                 {
                     return TestFZ(sfera, connStr, req.TestFz);
+                }
+                else if (req.Action == "UpdatePzUwagi" && req.UpdatePzUwagi != null)
+                {
+                    return UpdatePzUwagi(connStr, req.UpdatePzUwagi);
                 }
                 else if (req.Action == "CreateFZByPz" && req.CreateFzByPz != null)
                 {
@@ -712,6 +728,73 @@ namespace ReflectSfera
             updateCmd.ExecuteNonQuery();
 
             return new CliResponse { Success = true, Message = $"Tracking zapisany do PZ docId={docId}" };
+        }
+
+        /// <summary>
+        /// Aktualizuje pole Uwagi (i opcjonalnie NumerPrzesylki) w PZ wskazanym sygnatura.
+        /// Sygnatura moze byc w formacie "PV54/2026" lub "PV 54/2026" (z lub bez spacji).
+        /// </summary>
+        static CliResponse UpdatePzUwagi(string connStr, UpdatePzUwagiRequest req)
+        {
+            if (string.IsNullOrWhiteSpace(req.PzSygnatura))
+                return new CliResponse { Success = false, Message = "Brak PzSygnatura" };
+            if (string.IsNullOrWhiteSpace(req.Uwagi) && string.IsNullOrWhiteSpace(req.UwagiAppend))
+                return new CliResponse { Success = false, Message = "Brak Uwagi ani UwagiAppend" };
+
+            // Normalizuj sygnature: "PV54/2026" -> "PV 54/2026"
+            string syg = req.PzSygnatura.Trim();
+            // Jesli brak spacji przed liczba (np. "PV54" zamiast "PV 54"), dodaj spacje
+            var sygNorm = System.Text.RegularExpressions.Regex.Replace(syg, @"^([A-Z]+)(\d)", "$1 $2");
+
+            using var conn = new SqlConnection(connStr);
+            conn.Open();
+
+            // Znajdz Id dokumentu po sygnaturze (probuj obie wersje: z i bez spacji)
+            int? docId = null;
+            string foundSyg = "";
+            foreach (var tryS in new[] { sygNorm, syg })
+            {
+                using var findCmd = new SqlCommand(
+                    @"SELECT TOP 1 d.Id, d.NumerWewnetrzny_PelnaSygnatura
+                      FROM ModelDanychContainer.Dokumenty d
+                      WHERE d.NumerWewnetrzny_PelnaSygnatura = @syg",
+                    conn);
+                findCmd.Parameters.AddWithValue("@syg", tryS);
+                using var rdr = findCmd.ExecuteReader();
+                if (rdr.Read())
+                {
+                    docId = rdr.GetInt32(0);
+                    try { foundSyg = rdr.GetString(1); } catch { foundSyg = tryS; }
+                    break;
+                }
+            }
+
+            if (!docId.HasValue)
+                return new CliResponse { Success = false, Message = $"Nie znaleziono PZ o sygnaturze: {syg} (szukano tez {sygNorm})" };
+
+            string newUwagi;
+            if (!string.IsNullOrWhiteSpace(req.Uwagi))
+            {
+                // Tryb: nadpisz pole Uwagi
+                newUwagi = req.Uwagi;
+                using var updCmd = new SqlCommand(
+                    "UPDATE ModelDanychContainer.Dokumenty SET Uwagi = @uwagi WHERE Id = @id", conn);
+                updCmd.Parameters.AddWithValue("@uwagi", newUwagi);
+                updCmd.Parameters.AddWithValue("@id", docId.Value);
+                updCmd.ExecuteNonQuery();
+            }
+            else
+            {
+                // Tryb: dopisz na koncu
+                using var updCmd = new SqlCommand(
+                    "UPDATE ModelDanychContainer.Dokumenty SET Uwagi = ISNULL(Uwagi,'') + @append WHERE Id = @id", conn);
+                updCmd.Parameters.AddWithValue("@append", " | " + req.UwagiAppend);
+                updCmd.Parameters.AddWithValue("@id", docId.Value);
+                updCmd.ExecuteNonQuery();
+                newUwagi = "[append] " + req.UwagiAppend;
+            }
+
+            return new CliResponse { Success = true, Message = $"Uwagi PZ {foundSyg} (docId={docId}) zaktualizowane: {newUwagi}" };
         }
 
         static CliResponse UpdateInvoice(Uchwyt sfera, string connStr, UpdateInvoiceRequest req)

@@ -1,6 +1,6 @@
 # Vero Sport — Zalando Integration
 
-## 📋 Notatka: 2026-03-27, 20:46
+## 📋 Notatka: 2026-03-29, 20:34
 
 ### ✅ Co działa
 
@@ -12,12 +12,12 @@
 - **Parsowanie faktur PDF** — wyciąganie numeru FV, daty, SKU, cen z PDF Zalando
 - **UpdateInvoice** — NumerZewnetrzny + DataWydaniaWystawienia poprawnie ustawiane na PZ
 - **FZ przez Discord PDF** — `CreateFZByPz` działa produkcyjnie (data z PDF, status=21 Odłożone)
+- **Logika podwójnej paczki** — split shipment: kwota z maila Zalando/InPost, porównanie z PZ total (±10 PLN), WYSLANE dopiero po kompletnej wysyłce, uwagi w PZ
 
 ---
 
 ### ❌ Co nie działa / nie sprawdzone
 
-- **Logika podwójnej paczki** — brak implementacji
 - **Wysyłanie faktur na Google Docs** — nie zaimplementowane
 - **Logika dostaw i odkładania paczek** — nie gotowe
 

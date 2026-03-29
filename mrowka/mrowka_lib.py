@@ -1497,25 +1497,27 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
     }, timeout=90)
     if fz_result and (fz_result.get("Success") or fz_result.get("documentNumber")):
         fz_num = fz_result.get("DocumentNumber") or fz_result.get("documentNumber", "?")
-        msg_fz = await reply_target.reply(
+        await reply_target.reply(
             f"\U0001f9fe **FZ `{fz_num}` utworzone!**\n"
             f"NrZewnetrzny: `{inv.invoice_number}` | Order: `{order_name}`"
         )
-        # Usun wszystkie wiadomosci po sukcesie
-        import asyncio as _asyncio
-        await _asyncio.sleep(3)
-        for msg_to_del in [msg_fz, msg_parsowana, message]:
-            try:
-                await msg_to_del.delete()
-            except Exception:
-                pass
-        if reply_mode and message.reference and message.reference.message_id:
-            try:
-                orig_msg = await message.channel.fetch_message(message.reference.message_id)
-                if orig_msg and orig_msg.author.bot:
-                    await orig_msg.delete()
-            except Exception:
-                pass
+
+        # Trigger ZREALIZOWANE jesli wszystkie paczki dostarczone
+        async with mrowka_data.PisarzMrowka.lock:
+            _d2 = await mrowka_data.PisarzMrowka.read(safe=False)
+            _oi2 = None
+            for _t2 in _d2.tickets.values():
+                if order_name in _t2.divided_orders:
+                    _oi2 = _t2.divided_orders[order_name]
+                    break
+            if _oi2 is not None:
+                expected = max(len(_oi2.shipments), 1)
+                if _oi2.delivery_confirmations >= expected:
+                    await _trigger_zrealizowane(bot, _oi2, _d2)
+                    await mrowka_data.PisarzMrowka.write(_d2, safe=False)
+                    logger.logger.info(
+                        "handle_faktura_pdf: %s → ZREALIZOWANE po FZ", order_name
+                    )
     else:
         err = fz_result.get("Message", "?") if fz_result else "brak odpowiedzi"
         await reply_target.reply(
@@ -1682,23 +1684,26 @@ async def handle_interia_error_reaction(bot, message: dc.Message):
 
 @logger.async_try_log()
 async def handle_faktura_status_reaction(bot, message: dc.Message, emoji: str):
+    """
+    Reakcje na wiadomosc faktury - TYLKO wizualne znaczniki.
+    NIE triggeruja ZREALIZOWANE. NIE usuwaja wiadomosci.
+    Jedynym triggerem ZREALIZOWANE jest odeslanie faktury PDF (handle_faktura_pdf).
+    👍🏿 = ok/w trakcie, 👎🏿 = problem
+    """
     async with mrowka_data.PisarzMrowka.lock:
         data = await mrowka_data.PisarzMrowka.read(safe=False)
-        ticket_name = data.message_id_to_ticket_name[message.id]
-        order_item_name = data.message_id_to_order_item_name[message.id]
+        ticket_name = data.message_id_to_ticket_name.get(message.id)
+        order_item_name = data.message_id_to_order_item_name.get(message.id)
+        if not ticket_name or not order_item_name:
+            return
         order_item = data.tickets[ticket_name].divided_orders[order_item_name]
 
         if emoji == "👍🏿":
-            order_item.faktura = True
-
-            # Jesli wszystkie paczki dostarczone → od razu ZREALIZOWANE (async, nie blokuje)
-            expected = max(len(order_item.shipments), 1)
-            if order_item.delivery_confirmations >= expected:
-                await _trigger_zrealizowane(bot, order_item, data)
-
+            order_item.faktura = True    # status wizualny "ok / w trakcie"
         elif emoji == "👎🏿":
-            order_item.faktura = False
+            order_item.faktura = False   # status wizualny "problem"
 
+        # Tylko aktualizacja Discord - bez triggera ZREALIZOWANE
         await order_item.discord_update(bot, data)
         await mrowka_data.PisarzMrowka.write(data, safe=False)
 

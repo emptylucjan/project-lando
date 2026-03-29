@@ -1120,12 +1120,14 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
 async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
     """
     Skanuje IMAP w poszukiwaniu maili 'Cyfrowy dowód dostawy' / 'Przesyłka została dostarczona'.
-    Dla każdego maila:
-      1. Znajduje order_item po koncie Zalando (To: header)
-      2. Sprawdza czy już ZREALIZOWANE (deduplication) — jeśli tak, pomija
-      3. Zmienia status na ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
-      4. Wywołuje /api/pz/accept z trackiem (przyjęcie w Subiekcie)
-      5. Zapisuje dane
+
+    Logika split shipment:
+      - Każda paczka generuje: 1x InPost "Dziękujemy" (→ oi.shipments) + 1x "Cyfrowy dowód dostawy"
+      - expected = max(len(oi.shipments), 1)
+      - ZREALIZOWANE dopiero gdy delivery_confirmations >= expected
+
+    Mapowanie: po koncie Zalando (To: header → oi.mail.mail)
+    Deduplication: status ZREALIZOWANE + mail oznaczony jako SEEN po przetworzeniu
     """
     try:
         confirmed_list = await asyncio.to_thread(gmail_imap.get_all_new_delivery_confirmed_emails)
@@ -1138,7 +1140,7 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
         async with mrowka_data.PisarzMrowka.lock:
             data = await mrowka_data.PisarzMrowka.read(safe=False)
 
-            # Buduj mapę konto → order_item
+            # Mapowanie konto → order_item
             mail_to_oi: dict[str, mrowka_data.MrowkaOrderItem] = {}
             for ticket in data.tickets.values():
                 for oi in ticket.divided_orders.values():
@@ -1146,6 +1148,8 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                         mail_to_oi[oi.mail.mail.lower()] = oi
 
             changed = False
+            zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
+
             for info in confirmed_list:
                 account = info.zalando_account.lower()
                 oi = mail_to_oi.get(account)
@@ -1156,16 +1160,36 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                     continue
 
                 cur = oi.history.get_status()
-                zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
 
-                # Deduplication — jeśli już zrealizowane, pomijamy
+                # Juz zrealizowane — pomijamy (deduplication)
                 if cur.status == zrealizowane:
                     logger.logger.info(
-                        "check_gmail_delivery_confirmed: %s już ZREALIZOWANE — pomijam", oi.name
+                        "check_gmail_delivery_confirmed: %s juz ZREALIZOWANE — pomijam", oi.name
                     )
                     continue
 
-                # Sprawdź czy status pozwala na przejście do ZREALIZOWANE
+                # Zlicz potwierdzenie dostawy
+                oi.delivery_confirmations += 1
+                changed = True
+
+                # Ile paczek oczekujemy? InPost nadania sa juz w oi.shipments
+                expected = max(len(oi.shipments), 1)
+
+                logger.logger.info(
+                    "check_gmail_delivery_confirmed: %s — potwierdzenie %d/%d (order=%s, tracking=%s)",
+                    oi.name, oi.delivery_confirmations, expected, info.order_number, info.tracking
+                )
+
+                if oi.delivery_confirmations < expected:
+                    # Split shipment — czekamy na kolejna paczke
+                    logger.logger.info(
+                        "check_gmail_delivery_confirmed: %s — split shipment, czekam na %d/%d paczke",
+                        oi.name, oi.delivery_confirmations + 1, expected
+                    )
+                    await oi.discord_update(bot, data)
+                    continue
+
+                # Wszystkie paczki dostarczone → ZREALIZOWANE
                 if zrealizowane not in cur.status.next_statuses():
                     logger.logger.warning(
                         "check_gmail_delivery_confirmed: %s — status %s nie pozwala na ZREALIZOWANE",
@@ -1173,28 +1197,17 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                     )
                     continue
 
-                logger.logger.info(
-                    "check_gmail_delivery_confirmed: %s → ZREALIZOWANE (tracking=%s, order=%s)",
-                    oi.name, info.tracking, info.order_number
-                )
-
-                # Zmień status
                 await oi.change_status(bot, zrealizowane, cur.user, data)
-                changed = True
+                logger.logger.info("check_gmail_delivery_confirmed: %s → ZREALIZOWANE", oi.name)
 
-                # Przyjęcie w Subiekcie przez tracking
+                # Przyjecie w Subiekcie (jesli mamy tracking)
                 if info.tracking:
                     pz_result = await _subiekt_post(
                         "/api/pz/accept", {"tracking": info.tracking}, timeout=30
                     )
                     if pz_result and pz_result.get("sygnatura"):
                         logger.logger.info(
-                            "check_gmail_delivery_confirmed: PZ accepted, sygnatura=%s", pz_result["sygnatura"]
-                        )
-                    else:
-                        logger.logger.warning(
-                            "check_gmail_delivery_confirmed: /api/pz/accept brak odpowiedzi dla tracking=%s",
-                            info.tracking
+                            "check_gmail_delivery_confirmed: PZ accept OK, sygnatura=%s", pz_result["sygnatura"]
                         )
 
             if changed:

@@ -584,6 +584,7 @@ class MrowkaOrderItem:
     faktura: Optional[bool] = None
     pz_sygnatura: Optional[str] = None  # Sygnatura PZ w Subiekcie (np. PZ 7/2026)
     shipments: list[ShipmentInfo] = dataclasses.field(default_factory=list)  # Lista nadanych przesyłek
+    delivery_confirmations: int = 0  # Licznik 'Cyfrowy dowód dostawy' — do bramkowania ZREALIZOWANE przy split shipment
 
     def shipments_uwagi(self) -> str:
         """Buduje tekst do pola Uwagi PZ opisujący nadane przesyłki."""

@@ -819,15 +819,9 @@ class MrowkaOrderItem:
             return
 
         status = self.history.get_status()
-        if (
-            self.faktura is not None
-            or status.status != MrowkaOrderItemStatus.ZAMOWIENIE_WYSLANE
-        ):
-            faktura_message = await self.get_faktura_message(bot)
-            await faktura_message.delete(bot)
-            self.faktura_message_id = None
-            return
 
+        # Wiadomosc fakturowa NIGDY nie usuwana automatycznie —
+        # znika tylko gdy magazynier odeśle fakturę PDF (handle_faktura_pdf)
         faktura_message = await self.get_faktura_message(bot)
         content = self.get_faktura_message_content()
         await faktura_message.edit(bot, content)

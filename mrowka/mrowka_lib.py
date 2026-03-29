@@ -1532,10 +1532,22 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
                 expected = max(len(_oi2.shipments), 1)
                 if _oi2.delivery_confirmations >= expected:
                     await _trigger_zrealizowane(bot, _oi2, _d2)
-                    await mrowka_data.PisarzMrowka.write(_d2, safe=False)
                     logger.logger.info(
                         "handle_faktura_pdf: %s → ZREALIZOWANE po FZ", order_name
                     )
+
+                # Usun wiadomosc z prosba o fakture (faktura_message_id) — jedyny moment kasowania
+                if _oi2.faktura_message_id is not None:
+                    try:
+                        faktura_ch = await _oi2.get_faktura_channel(bot)
+                        faktura_msg = await faktura_ch.fetch_message(bot, _oi2.faktura_message_id)
+                        if faktura_msg:
+                            await faktura_msg.delete(bot)
+                        _oi2.faktura_message_id = None
+                    except Exception as _fe:
+                        logger.logger.warning("handle_faktura_pdf: nie udalo sie usunac faktura_message: %s", _fe)
+
+                await mrowka_data.PisarzMrowka.write(_d2, safe=False)
     else:
         err = fz_result.get("Message", "?") if fz_result else "brak odpowiedzi"
         await reply_target.reply(

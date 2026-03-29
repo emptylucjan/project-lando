@@ -1109,6 +1109,9 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
                         oi.name, info.tracking
                     )
 
+                # Pierwszy mail InPost dnia → rush mode
+                _maybe_start_rush_mode(bot)
+
             if changed:
                 await mrowka_data.PisarzMrowka.write(data, safe=False)
 

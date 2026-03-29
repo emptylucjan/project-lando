@@ -593,6 +593,17 @@ class MrowkaOrderItem:
         parts = " | ".join(s.to_str() for s in self.shipments)
         return f"{n} przesylk{'a' if n == 1 else 'i'}: {parts}"
 
+    def shipped_amount_str(self) -> str:
+        """Zwraca string z kwotą wysłaną vs. wartość zamówienia np. '3100.00/3900.00 zł'.
+        Puste jeśli brak przesyłek."""
+        if not self.shipments:
+            return ""
+        sent = sum(s.amount_pln for s in self.shipments if s.amount_pln is not None)
+        total = self.price_total()
+        if sent == 0:
+            return ""
+        return f"{sent:.2f}/{total:.2f} zł"
+
     def shoe_collection(self) -> MrowkaShoeCollection:
         sc = MrowkaShoeCollection()
         for shoe in self.shoes:
@@ -614,10 +625,12 @@ class MrowkaOrderItem:
         _track_part = (" | `" + self.tracking + "`") if self.tracking else ""
         _date_part = (" | " + str(self.delivery_date)) if self.delivery_date else ""
         _pz_part = (" | 📦 `" + self.pz_sygnatura + "`") if self.pz_sygnatura else ""
+        _shipped = self.shipped_amount_str()
+        _shipped_part = (" | 🚚 " + _shipped) if _shipped else ""
         return (
             f"{status.status.emoji()} **{self.name}** | {self.price_total():.2f}z\u0142 | {status.status.text()} "
             f"({status.user.name} - {status.timestamp.strftime('%Y-%m-%d %H:%M:%S')})"
-            + _mail_part + _track_part + _date_part + _pz_part
+            + _mail_part + _track_part + _date_part + _pz_part + _shipped_part
         )
 
     def to_discord_warehouse(self) -> str:
@@ -625,11 +638,14 @@ class MrowkaOrderItem:
         _tracking = ("```" + self.tracking + "```") if self.tracking else "\n"
         _mail = self.mail.to_discord() if self.mail else "Brak wolnych maili"
         _pz = (f"📦 PZ: **{self.pz_sygnatura}**\n") if self.pz_sygnatura else ""
+        _shipped = self.shipped_amount_str()
+        _shipped_line = (f"🚚 Wyslano: **{_shipped}**\n") if _shipped else ""
         return (
             f"\U0001f6cd\ufe0f Zam\u00f3wienie: **{self.name}**"
             + _tracking
             + f"Cena: **{self.price_total():.2f}z\u0142**\n"
             + _pz
+            + _shipped_line
             + f"{self.history.get_status().to_discord()}\n"
             + _mail + "\n"
             + "\n"

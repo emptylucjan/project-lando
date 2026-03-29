@@ -1097,6 +1097,8 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
                         except Exception as _e:
                             logger.logger.warning("check_gmail_delivery: blad powiadomienia split: %s", _e)
                         changed = True  # zapisz stan (dodano ShipmentInfo)
+                        # Odswierz wiadomosci Discord - pokaz kwote 3100/3900 PLN
+                        await oi.discord_update(bot, data)
                         continue
 
                 if should_mark_wyslane:

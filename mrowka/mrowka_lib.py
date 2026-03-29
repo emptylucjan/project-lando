@@ -1119,15 +1119,14 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
 @logger.async_try_log()
 async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
     """
-    Skanuje IMAP w poszukiwaniu maili 'Cyfrowy dowód dostawy' / 'Przesyłka została dostarczona'.
+    Skanuje IMAP w poszukiwaniu maili 'Cyfrowy dowod dostawy' / 'Przesylka zostala dostarczona'.
 
     Logika split shipment:
-      - Każda paczka generuje: 1x InPost "Dziękujemy" (→ oi.shipments) + 1x "Cyfrowy dowód dostawy"
       - expected = max(len(oi.shipments), 1)
-      - ZREALIZOWANE dopiero gdy delivery_confirmations >= expected
+      - WYSLANE + faktura request na Discord dopiero gdy delivery_confirmations >= expected
+      - ZREALIZOWANE triggerowane osobno w handle_faktura_status_reaction po 'faktura = True'
 
-    Mapowanie: po koncie Zalando (To: header → oi.mail.mail)
-    Deduplication: status ZREALIZOWANE + mail oznaczony jako SEEN po przetworzeniu
+    Mapowanie: po koncie Zalando (To: header -> oi.mail.mail)
     """
     try:
         confirmed_list = await asyncio.to_thread(gmail_imap.get_all_new_delivery_confirmed_emails)
@@ -1140,7 +1139,6 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
         async with mrowka_data.PisarzMrowka.lock:
             data = await mrowka_data.PisarzMrowka.read(safe=False)
 
-            # Mapowanie konto → order_item
             mail_to_oi: dict[str, mrowka_data.MrowkaOrderItem] = {}
             for ticket in data.tickets.values():
                 for oi in ticket.divided_orders.values():
@@ -1148,6 +1146,7 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                         mail_to_oi[oi.mail.mail.lower()] = oi
 
             changed = False
+            wyslane   = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_WYSLANE
             zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
 
             for info in confirmed_list:
@@ -1161,7 +1160,7 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
 
                 cur = oi.history.get_status()
 
-                # Juz zrealizowane — pomijamy (deduplication)
+                # Juz zrealizowane — pomijamy
                 if cur.status == zrealizowane:
                     logger.logger.info(
                         "check_gmail_delivery_confirmed: %s juz ZREALIZOWANE — pomijam", oi.name
@@ -1172,49 +1171,85 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                 oi.delivery_confirmations += 1
                 changed = True
 
-                # Ile paczek oczekujemy? InPost nadania sa juz w oi.shipments
                 expected = max(len(oi.shipments), 1)
 
                 logger.logger.info(
-                    "check_gmail_delivery_confirmed: %s — potwierdzenie %d/%d (order=%s, tracking=%s)",
-                    oi.name, oi.delivery_confirmations, expected, info.order_number, info.tracking
+                    "check_gmail_delivery_confirmed: %s — potwierdzenie %d/%d (order=%s)",
+                    oi.name, oi.delivery_confirmations, expected, info.order_number
                 )
 
                 if oi.delivery_confirmations < expected:
-                    # Split shipment — czekamy na kolejna paczke
+                    # Split shipment — czekamy na kolejna paczke, tylko update Discord
                     logger.logger.info(
-                        "check_gmail_delivery_confirmed: %s — split shipment, czekam na %d/%d paczke",
-                        oi.name, oi.delivery_confirmations + 1, expected
+                        "check_gmail_delivery_confirmed: %s — split, czekam %d/%d",
+                        oi.name, oi.delivery_confirmations, expected
                     )
                     await oi.discord_update(bot, data)
                     continue
 
-                # Wszystkie paczki dostarczone → ZREALIZOWANE
-                if zrealizowane not in cur.status.next_statuses():
-                    logger.logger.warning(
-                        "check_gmail_delivery_confirmed: %s — status %s nie pozwala na ZREALIZOWANE",
-                        oi.name, cur.status.name
-                    )
-                    continue
-
-                await oi.change_status(bot, zrealizowane, cur.user, data)
-                logger.logger.info("check_gmail_delivery_confirmed: %s → ZREALIZOWANE", oi.name)
-
-                # Przyjecie w Subiekcie (jesli mamy tracking)
-                if info.tracking:
-                    pz_result = await _subiekt_post(
-                        "/api/pz/accept", {"tracking": info.tracking}, timeout=30
-                    )
-                    if pz_result and pz_result.get("sygnatura"):
+                # Wszystkie paczki dostarczone — zapewnij status WYSLANE
+                # (jesli status byl nizszy niz WYSLANE, przeskocz do WYSLANE)
+                if wyslane in cur.status.next_statuses() or cur.status == wyslane:
+                    if cur.status != wyslane:
+                        await oi.change_status(bot, wyslane, cur.user, data)
                         logger.logger.info(
-                            "check_gmail_delivery_confirmed: PZ accept OK, sygnatura=%s", pz_result["sygnatura"]
+                            "check_gmail_delivery_confirmed: %s → WYSLANE (skip z %s)",
+                            oi.name, cur.status.name
                         )
+                    else:
+                        # Juz WYSLANE — tylko odswiezamy Discord (ponowi faktura request jesli nie bylo)
+                        await oi.discord_update(bot, data)
+                else:
+                    # Status jest juz za WYSLANE albo anomalia — tylko discord_update
+                    await oi.discord_update(bot, data)
+
+                # Jezeli faktura juz zatwierdzona (np. przyszla wczesniej) — od razu ZREALIZOWANE
+                if oi.faktura is True:
+                    await _trigger_zrealizowane(bot, oi, data, info.tracking)
 
             if changed:
                 await mrowka_data.PisarzMrowka.write(data, safe=False)
 
     except Exception as e:
         logger.logger.exception("check_gmail_delivery_confirmed: %s", e)
+
+
+async def _trigger_zrealizowane(
+    bot: "commands.Bot",
+    oi: "mrowka_data.MrowkaOrderItem",
+    data: "mrowka_data.MrowkaData",
+    tracking: Optional[str] = None,
+) -> None:
+    """
+    Przejdz do ZREALIZOWANE i wywolaj /api/pz/accept.
+    Wywolywane gdy: delivery_confirmations >= expected AND faktura == True.
+    """
+    zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
+    cur = oi.history.get_status()
+    if cur.status == zrealizowane:
+        return
+    if zrealizowane not in cur.status.next_statuses():
+        logger.logger.warning(
+            "_trigger_zrealizowane: %s — status %s nie pozwala na ZREALIZOWANE",
+            oi.name, cur.status.name
+        )
+        return
+    await oi.change_status(bot, zrealizowane, cur.user, data)
+    logger.logger.info("_trigger_zrealizowane: %s → ZREALIZOWANE", oi.name)
+
+    # Przyjecie w Subiekcie — uzywamy trackingu z biezacego maila
+    # lub ostatniego trackingu z ListyShipments
+    pz_tracking = tracking
+    if not pz_tracking and oi.shipments:
+        pz_tracking = oi.shipments[-1].tracking
+    if pz_tracking:
+        pz_result = await _subiekt_post(
+            "/api/pz/accept", {"tracking": pz_tracking}, timeout=30
+        )
+        if pz_result and pz_result.get("sygnatura"):
+            logger.logger.info(
+                "_trigger_zrealizowane: PZ accept OK, sygnatura=%s", pz_result["sygnatura"]
+            )
 
 
 @logger.async_try_log()
@@ -1655,6 +1690,12 @@ async def handle_faktura_status_reaction(bot, message: dc.Message, emoji: str):
 
         if emoji == "👍🏿":
             order_item.faktura = True
+
+            # Jesli wszystkie paczki dostarczone → od razu ZREALIZOWANE (async, nie blokuje)
+            expected = max(len(order_item.shipments), 1)
+            if order_item.delivery_confirmations >= expected:
+                await _trigger_zrealizowane(bot, order_item, data)
+
         elif emoji == "👎🏿":
             order_item.faktura = False
 

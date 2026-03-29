@@ -1062,6 +1062,7 @@ class MrowkaTicket:
     all_wyslane_sent: bool = False
     all_zrealizowane_sent: bool = False
     all_anulowane_sent: bool = False
+    zk_number: Optional[str] = None  # Numer ZK w Subiekcie (np. "ZK 3/2026")
 
     async def discord_update(self, bot: commands.Bot):
         await self.oczekujace(bot)
@@ -1361,6 +1362,7 @@ class MrowkaTicket:
             zk_error = None
             try:
                 zk_num = await _ml.create_zk_for_ticket(self)
+                self.zk_number = zk_num  # zapisz na tickecie
                 if channel:
                     await channel.send(
                         bot,

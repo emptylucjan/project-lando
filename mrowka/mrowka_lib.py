@@ -1189,6 +1189,10 @@ async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
                     oi.name, oi.delivery_confirmations, expected, info.order_number
                 )
 
+                # Rejestruj w sesji rush i uruchom rush mode jesli pierwszy mail dnia
+                _rush_register_delivery(oi.name)
+                _maybe_start_rush_mode(bot)
+
                 if oi.delivery_confirmations < expected:
                     # Split shipment — czekamy na kolejna paczke, tylko update Discord
                     logger.logger.info(
@@ -1853,6 +1857,202 @@ async def check_interia(bot: commands.Bot):
                     await order_item.discord_update(bot, data)
 
                 await mrowka_data.PisarzMrowka.write(data, safe=False)
+
+
+# ─── RUSH MODE: przyspieszony polling po wykryciu dostawy ────────────────────
+
+# Stan modułowy (reset przy restarcie bota — akceptowalne, maile są UNSEEN)
+_rush_mode_date: Optional[str] = None        # data ostatniego rush (YYYY-MM-DD)
+_rush_mode_running: bool = False             # czy coroutine juz dziala
+_rush_session_oi_names: set[str] = set()    # OI które dotarły w tej sesji
+
+
+def _rush_register_delivery(oi_name: str) -> None:
+    """Rejestruje OI jako dostarczone w bieżącej sesji rush."""
+    _rush_session_oi_names.add(oi_name)
+
+
+def _maybe_start_rush_mode(bot: commands.Bot) -> None:
+    """
+    Triggeruje rush mode jeśli nie był jeszcze uruchomiony dzisiaj.
+    Wywołać gdy wykryto pierwszy mail dostawy.
+    """
+    global _rush_mode_date, _rush_mode_running
+    import datetime as _dt
+    today = _dt.date.today().isoformat()
+    if _rush_mode_running or _rush_mode_date == today:
+        return
+    _rush_mode_date = today
+    _rush_mode_running = True
+    logger.logger.info("delivery_rush_mode: startuje (3×15 min)")
+    asyncio.create_task(_delivery_rush_mode(bot))
+
+
+async def _delivery_rush_mode(bot: commands.Bot) -> None:
+    """
+    Coroutine: co 15 minut (×3) ponawia skan maili dostawczych.
+    Po 3. skanowaniu generuje raport XLSX → #zalando-dostawy.
+    """
+    global _rush_mode_running
+    try:
+        for i in range(3):
+            await asyncio.sleep(15 * 60)   # 15 minut
+            logger.logger.info("delivery_rush_mode: poll %d/3", i + 1)
+            await check_gmail_delivery(bot)
+            await check_gmail_delivery_confirmed(bot)
+
+        logger.logger.info("delivery_rush_mode: 3/3 done → generuję raport")
+        await _generate_delivery_report(bot)
+    except Exception as e:
+        logger.logger.exception("delivery_rush_mode: %s", e)
+    finally:
+        _rush_mode_running = False
+
+
+async def _generate_delivery_report(bot: commands.Bot) -> None:
+    """
+    Generuje raport XLSX + wiadomość Discord do #zalando-dostawy.
+
+    Dla każdego ticketu gdzie OI z rush sesji:
+      - PRZEPAKOWYWANIE = WSZYSTKIE non-anulowane OI są ZREALIZOWANE
+      - ODŁOŻONA = przynajmniej jeden OI jeszcze nie ZREALIZOWANY
+      - Lista PZ: dzisiejsze + wcześniej zrealizowane (do zebrania)
+      - ZK: numer + lista PZ
+    """
+    try:
+        import openpyxl
+        import datetime as _dt
+        import pathlib as _pathlib
+        import io
+
+        data = await mrowka_data.PisarzMrowka.read()
+        zrealizowane_st = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
+        anulowane_st    = mrowka_data.MrowkaOrderItemStatusStatus.ANULOWANE
+
+        # Zbierz tickety dotknięte sessją
+        touched_tickets: dict[str, mrowka_data.MrowkaTicket] = {}
+        for ticket in data.tickets.values():
+            for oi in ticket.divided_orders.values():
+                if oi.name in _rush_session_oi_names:
+                    touched_tickets[ticket.name] = ticket
+                    break
+
+        if not touched_tickets:
+            logger.logger.info("_generate_delivery_report: brak dotkniętych ticketów — pomijam")
+            return
+
+        # ── Buduj Excel ────────────────────────────────────────────────────────
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Dostawy"
+
+        # Style
+        from openpyxl.styles import Font, PatternFill, Alignment
+        hdr_font = Font(bold=True, color="FFFFFF")
+        hdr_fill_green  = PatternFill("solid", fgColor="1F6F3F")
+        hdr_fill_orange = PatternFill("solid", fgColor="CC6600")
+        przepak_fill = PatternFill("solid", fgColor="D6E4BC")
+        odloz_fill   = PatternFill("solid", fgColor="FCE4D6")
+
+        ws.append(["Ticket", "ZK", "Akcja", "Konto (mail)", "Tracking", "PZ sygnatura", "Status OI", "Uwagi"])
+        for cell in ws[1]:
+            cell.font = hdr_font
+            cell.fill = hdr_fill_green
+            cell.alignment = Alignment(horizontal="center")
+
+        ws.column_dimensions["A"].width = 22
+        ws.column_dimensions["B"].width = 14
+        ws.column_dimensions["C"].width = 18
+        ws.column_dimensions["D"].width = 35
+        ws.column_dimensions["E"].width = 28
+        ws.column_dimensions["F"].width = 16
+        ws.column_dimensions["G"].width = 24
+        ws.column_dimensions["H"].width = 30
+
+        # ── Discord text ───────────────────────────────────────────────────────
+        discord_lines: list[str] = []
+        today_str = _dt.date.today().strftime("%d.%m.%Y")
+        discord_lines.append(f"📦 **Raport dostaw {today_str}** (po 45 min monitorowania)\n")
+
+        for ticket_name, ticket in sorted(touched_tickets.items()):
+            active_ois = [
+                oi for oi in ticket.divided_orders.values()
+                if oi.history.get_status().status.get_status() != anulowane_st
+            ]
+            all_done = all(
+                oi.history.get_status().status == zrealizowane_st
+                for oi in active_ois
+            )
+            akcja = "✅ PRZEPAKOWYWANIE" if all_done else "⏳ ODŁOŻONA"
+            row_fill = przepak_fill if all_done else odloz_fill
+            zk = ticket.zk_number or "—"
+
+            discord_lines.append(f"─────────────────────────────")
+            discord_lines.append(f"🎫 **{ticket_name}**  |  ZK: `{zk}`  →  {akcja}")
+
+            # Dzisiejsze dostawy (w sesji rush)
+            today_ois = [oi for oi in active_ois if oi.name in _rush_session_oi_names]
+            if today_ois:
+                discord_lines.append("  📬 **Dzisiaj dotarły:**")
+            for oi in today_ois:
+                mail_str = oi.mail.mail if oi.mail else "—"
+                pz = oi.pz_sygnatura or "—"
+                track = oi.tracking or "—"
+                status_name = oi.history.get_status().status.name
+                discord_lines.append(f"    • `{mail_str}` | tracking: `{track}` | PZ: `{pz}`")
+                ws.append([ticket_name, zk, akcja.replace("✅ ", "").replace("⏳ ", ""), mail_str, track, pz, status_name, "DZISIAJ"])
+                for cell in ws[ws.max_row]:
+                    cell.fill = row_fill
+
+            # Wcześniej zrealizowane (do zebrania razem)
+            earlier_ois = [
+                oi for oi in active_ois
+                if oi.name not in _rush_session_oi_names
+                and oi.history.get_status().status == zrealizowane_st
+            ]
+            if earlier_ois:
+                discord_lines.append("  🗃️ **Do zebrania (wcześniej zrealizowane):**")
+            for oi in earlier_ois:
+                mail_str = oi.mail.mail if oi.mail else "—"
+                pz = oi.pz_sygnatura or "—"
+                track = oi.tracking or "—"
+                discord_lines.append(f"    • `{mail_str}` | PZ: `{pz}`")
+                ws.append([ticket_name, zk, "", mail_str, track, pz, "ZREALIZOWANE", "WCZESNIEJ"])
+                for cell in ws[ws.max_row]:
+                    cell.fill = row_fill
+
+            # Brakujące (jeszcze czekają)
+            waiting_ois = [
+                oi for oi in active_ois
+                if oi.name not in _rush_session_oi_names
+                and oi.history.get_status().status != zrealizowane_st
+            ]
+            if waiting_ois:
+                discord_lines.append("  ❌ **Brakujące (jeszcze nie zrealizowane):**")
+            for oi in waiting_ois:
+                mail_str = oi.mail.mail if oi.mail else "—"
+                status_name = oi.history.get_status().status.name
+                discord_lines.append(f"    • `{mail_str}` | status: `{status_name}`")
+                ws.append([ticket_name, zk, "", mail_str, "—", "—", status_name, "CZEKA"])
+
+        discord_lines.append("")
+
+        # ── Zapisz XLSX do bufora ──────────────────────────────────────────────
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        xlsx_name = f"dostawy_{_dt.date.today().isoformat()}.xlsx"
+        discord_file = discord.File(buf, filename=xlsx_name)
+
+        # ── Wyślij na #zalando-dostawy ─────────────────────────────────────────
+        channel = await dc.CHANNEL_DOSTAWY(bot)
+        await channel.send(bot, content="\n".join(discord_lines), file=discord_file)
+        logger.logger.info("_generate_delivery_report: raport wysłany do #zalando-dostawy")
+
+    except Exception as e:
+        logger.logger.exception("_generate_delivery_report: %s", e)
+
 
 
 @logger.async_try_log()

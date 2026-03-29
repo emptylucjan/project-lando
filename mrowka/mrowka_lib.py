@@ -1983,7 +1983,7 @@ async def _generate_delivery_report(bot: commands.Bot) -> None:
                 oi.history.get_status().status == zrealizowane_st
                 for oi in active_ois
             )
-            akcja = "✅ PRZEPAKOWYWANIE" if all_done else "⏳ ODŁOŻONA"
+            akcja = "✅ PRZEPAKOWYWANIE" if all_done else "📦 ODKŁADAMY"
             row_fill = przepak_fill if all_done else odloz_fill
             zk = ticket.zk_number or "—"
 
@@ -2048,6 +2048,52 @@ async def _generate_delivery_report(bot: commands.Bot) -> None:
         # ── Wyślij na #zalando-dostawy ─────────────────────────────────────────
         channel = await dc.CHANNEL_DOSTAWY(bot)
         await channel.send(bot, content="\n".join(discord_lines), file=discord_file)
+
+        # ── Osobna wiadomość: ZK do przepakowania + PZ do zebrania ────────────
+        przepak_tickets = [
+            (t_name, t) for t_name, t in sorted(touched_tickets.items())
+            if all(
+                oi.history.get_status().status == zrealizowane_st
+                for oi in t.divided_orders.values()
+                if oi.history.get_status().status.get_status() != anulowane_st
+            )
+        ]
+        odkladamy_tickets = [
+            (t_name, t) for t_name, t in sorted(touched_tickets.items())
+            if (t_name, t) not in przepak_tickets
+        ]
+
+        zk_lines: list[str] = []
+        if przepak_tickets:
+            zk_lines.append(f"📋 **Dziś przepakowujemy {len(przepak_tickets)} ZK:**\n")
+            for t_name, t in przepak_tickets:
+                zk = t.zk_number or "—"
+                all_pz = [
+                    oi.pz_sygnatura for oi in t.divided_orders.values()
+                    if oi.pz_sygnatura
+                ]
+                pz_str = ", ".join(f"`{p}`" for p in all_pz) if all_pz else "brak PZ"
+                zk_lines.append(f"✅ **{zk}** ({t_name})")
+                zk_lines.append(f"   📂 PZ do zebrania: {pz_str}")
+                zk_lines.append("")
+
+        if odkladamy_tickets:
+            zk_lines.append(f"📦 **Odkładamy (niekompletne) — {len(odkladamy_tickets)} ZK:**\n")
+            for t_name, t in odkladamy_tickets:
+                zk = t.zk_number or "—"
+                waiting = [
+                    oi.mail.mail if oi.mail else oi.name
+                    for oi in t.divided_orders.values()
+                    if oi.history.get_status().status != zrealizowane_st
+                    and oi.history.get_status().status.get_status() != anulowane_st
+                ]
+                zk_lines.append(f"📦 **{zk}** ({t_name})")
+                zk_lines.append(f"   ⏳ Brakuje: {', '.join(waiting) or '?'}")
+                zk_lines.append("")
+
+        if zk_lines:
+            await channel.send(bot, content="\n".join(zk_lines))
+
         logger.logger.info("_generate_delivery_report: raport wysłany do #zalando-dostawy")
 
     except Exception as e:

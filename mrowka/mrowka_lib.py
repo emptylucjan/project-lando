@@ -644,6 +644,19 @@ async def _create_pz_for_order_item(
                 f"Konto: `{mail_email or '?'}` | Pozycji: {len(pz_items)} szt.",
             )
             logger.logger.info("PZ %s created for order %s (%d items)", doc_num, order_item.name, len(pz_items))
+            # Odśwież wiadomości Discorda — żeby PZ nr pojawił się w tickecie i magazynie
+            try:
+                async with mrowka_data.PisarzMrowka.lock:
+                    _data = await mrowka_data.PisarzMrowka.read(safe=False)
+                    _ticket = _data.tickets.get(order_item.ticket_name)
+                    if _ticket:
+                        _oi = _ticket.divided_orders.get(order_item.name)
+                        if _oi:
+                            _oi.pz_sygnatura = doc_num
+                            await _oi.discord_update(bot, _data)
+                    await mrowka_data.PisarzMrowka.write(_data, safe=False)
+            except Exception as _e:
+                logger.logger.warning("_create_pz_for_order_item: discord_update po PZ fail: %s", _e)
         else:
             await ticket_channel.send(
                 bot,

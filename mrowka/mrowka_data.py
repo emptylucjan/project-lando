@@ -613,20 +613,23 @@ class MrowkaOrderItem:
         _mail_part = (" | `" + self.mail.mail + "`") if self.mail else " | `BRAK MAILA`"
         _track_part = (" | `" + self.tracking + "`") if self.tracking else ""
         _date_part = (" | " + str(self.delivery_date)) if self.delivery_date else ""
+        _pz_part = (" | 📦 `" + self.pz_sygnatura + "`") if self.pz_sygnatura else ""
         return (
             f"{status.status.emoji()} **{self.name}** | {self.price_total():.2f}z\u0142 | {status.status.text()} "
             f"({status.user.name} - {status.timestamp.strftime('%Y-%m-%d %H:%M:%S')})"
-            + _mail_part + _track_part + _date_part
+            + _mail_part + _track_part + _date_part + _pz_part
         )
 
     def to_discord_warehouse(self) -> str:
         shoes_str = "\n".join(shoe.to_discord() for shoe in self.shoes)
         _tracking = ("```" + self.tracking + "```") if self.tracking else "\n"
         _mail = self.mail.to_discord() if self.mail else "Brak wolnych maili"
+        _pz = (f"📦 PZ: **{self.pz_sygnatura}**\n") if self.pz_sygnatura else ""
         return (
             f"\U0001f6cd\ufe0f Zam\u00f3wienie: **{self.name}**"
             + _tracking
             + f"Cena: **{self.price_total():.2f}z\u0142**\n"
+            + _pz
             + f"{self.history.get_status().to_discord()}\n"
             + _mail + "\n"
             + "\n"

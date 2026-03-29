@@ -1117,6 +1117,94 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
 
 
 @logger.async_try_log()
+async def check_gmail_delivery_confirmed(bot: commands.Bot) -> None:
+    """
+    Skanuje IMAP w poszukiwaniu maili 'Cyfrowy dowód dostawy' / 'Przesyłka została dostarczona'.
+    Dla każdego maila:
+      1. Znajduje order_item po koncie Zalando (To: header)
+      2. Sprawdza czy już ZREALIZOWANE (deduplication) — jeśli tak, pomija
+      3. Zmienia status na ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
+      4. Wywołuje /api/pz/accept z trackiem (przyjęcie w Subiekcie)
+      5. Zapisuje dane
+    """
+    try:
+        confirmed_list = await asyncio.to_thread(gmail_imap.get_all_new_delivery_confirmed_emails)
+        if not confirmed_list:
+            logger.logger.info("check_gmail_delivery_confirmed: brak nowych maili")
+            return
+
+        logger.logger.info("check_gmail_delivery_confirmed: %d maili do przetworzenia", len(confirmed_list))
+
+        async with mrowka_data.PisarzMrowka.lock:
+            data = await mrowka_data.PisarzMrowka.read(safe=False)
+
+            # Buduj mapę konto → order_item
+            mail_to_oi: dict[str, mrowka_data.MrowkaOrderItem] = {}
+            for ticket in data.tickets.values():
+                for oi in ticket.divided_orders.values():
+                    if oi.mail:
+                        mail_to_oi[oi.mail.mail.lower()] = oi
+
+            changed = False
+            for info in confirmed_list:
+                account = info.zalando_account.lower()
+                oi = mail_to_oi.get(account)
+                if oi is None:
+                    logger.logger.warning(
+                        "check_gmail_delivery_confirmed: nie znaleziono order_item dla konta %s", account
+                    )
+                    continue
+
+                cur = oi.history.get_status()
+                zrealizowane = mrowka_data.MrowkaOrderItemStatus.ZAMOWIENIE_ZOSTALO_ZREALIZOWANE
+
+                # Deduplication — jeśli już zrealizowane, pomijamy
+                if cur.status == zrealizowane:
+                    logger.logger.info(
+                        "check_gmail_delivery_confirmed: %s już ZREALIZOWANE — pomijam", oi.name
+                    )
+                    continue
+
+                # Sprawdź czy status pozwala na przejście do ZREALIZOWANE
+                if zrealizowane not in cur.status.next_statuses():
+                    logger.logger.warning(
+                        "check_gmail_delivery_confirmed: %s — status %s nie pozwala na ZREALIZOWANE",
+                        oi.name, cur.status.name
+                    )
+                    continue
+
+                logger.logger.info(
+                    "check_gmail_delivery_confirmed: %s → ZREALIZOWANE (tracking=%s, order=%s)",
+                    oi.name, info.tracking, info.order_number
+                )
+
+                # Zmień status
+                await oi.change_status(bot, zrealizowane, cur.user, data)
+                changed = True
+
+                # Przyjęcie w Subiekcie przez tracking
+                if info.tracking:
+                    pz_result = await _subiekt_post(
+                        "/api/pz/accept", {"tracking": info.tracking}, timeout=30
+                    )
+                    if pz_result and pz_result.get("sygnatura"):
+                        logger.logger.info(
+                            "check_gmail_delivery_confirmed: PZ accepted, sygnatura=%s", pz_result["sygnatura"]
+                        )
+                    else:
+                        logger.logger.warning(
+                            "check_gmail_delivery_confirmed: /api/pz/accept brak odpowiedzi dla tracking=%s",
+                            info.tracking
+                        )
+
+            if changed:
+                await mrowka_data.PisarzMrowka.write(data, safe=False)
+
+    except Exception as e:
+        logger.logger.exception("check_gmail_delivery_confirmed: %s", e)
+
+
+@logger.async_try_log()
 async def check_gmail_delay(bot: commands.Bot) -> None:
     """
     Sprawdza Gmail IMAP wszystkich kont w poszukiwaniu maili o opoznieniu dostawy

@@ -70,6 +70,19 @@ class DelayInfo:
         return f"DelayInfo(account={self.zalando_account}, subject={self.subject[:40]})"
 
 
+@dataclass
+class DeliveryConfirmedInfo:
+    """Info z maila 'Cyfrowy dowód dostawy' Zalando — paczka odebrana przez klienta."""
+    zalando_account: str   # np. eleatowskiedomeny+fiz13@gmail.com
+    gmail_base: str
+    order_number: Optional[str]   # np. "10910151322803"
+    tracking: Optional[str]       # np. "654751570015660275209675"
+
+    def __str__(self) -> str:
+        return (f"DeliveryConfirmedInfo(account={self.zalando_account}, "
+                f"order={self.order_number}, tracking={self.tracking})")
+
+
 def _load_gmail_accounts() -> list[dict]:
     """Wczytuje konta Gmail z config.json."""
     config_path = pathlib.Path(__file__).parent / "config.json"
@@ -399,7 +412,124 @@ def get_all_new_delivery_emails() -> list[DeliveryInfo]:
     return all_results
 
 
-# Frazy w temacie maila opóźnienia
+# ─── Cyfrowy dowód dostawy (paczka odebrana) ─────────────────────────────────
+
+_CONFIRMED_SUBJECTS = [
+    "cyfrowy dowod dostawy",
+    "cyfrowy dowd dostawy",       # literówka tolerancja
+    "przesylka zostala dostarczona",
+    "przesylka zostala dorczona",  # tolerancja
+    "shipment delivered",
+    "digital proof of delivery",
+]
+
+
+def _parse_delivery_confirmed(plain: str, html: str, to_header: str, gmail_base: str) -> DeliveryConfirmedInfo:
+    """Parsuje maila 'Cyfrowy dowód dostawy' — wyciąga tracking i numer zamówienia."""
+    full = plain + "\n" + html
+
+    # Numer zamówienia: "Numer zamówienia 10910151322803"
+    m_order = re.search(r"Numer\s+zam[oó]wienia[:\s]*([0-9]{10,20})", full, re.IGNORECASE)
+    if not m_order:
+        m_order = re.search(r"\b(1091[0-9]{10})\b", full)
+    order_number = m_order.group(1).strip() if m_order else None
+
+    # Tracking: "Numer śledzenia przesyłki: 654751570015660275209675"
+    tracking = None
+    m_track = re.search(r"Numer\s+[śs]ledzenia\s+przesy[łl]ki[:\s]*([0-9]{15,30})", full, re.IGNORECASE)
+    if m_track:
+        tracking = m_track.group(1).strip()
+    if not tracking:
+        # Z linku InPost: ?number=XXXX
+        m = re.search(r"number=([0-9]{15,30})", full, re.IGNORECASE)
+        if m:
+            tracking = m.group(1)
+
+    # Konto Zalando z To:
+    zalando_account = gmail_base
+    m_to = re.search(r"[\w.+\-]+@[\w.\-]+", to_header or "")
+    if m_to:
+        zalando_account = m_to.group(0)
+
+    return DeliveryConfirmedInfo(
+        zalando_account=zalando_account,
+        gmail_base=gmail_base,
+        order_number=order_number,
+        tracking=tracking,
+    )
+
+
+@_logger.try_log([])
+def get_new_delivery_confirmed_emails(gmail_account: dict, only_unseen: bool = True) -> list[DeliveryConfirmedInfo]:
+    """
+    Skanuje IMAP konta Gmail w poszukiwaniu maili 'Cyfrowy dowód dostawy'
+    (lub 'Przesyłka została dostarczona') od Zalando.
+    Zwraca listę DeliveryConfirmedInfo — jeden wpis na konto/zamówienie.
+    """
+    email_addr = gmail_account["email"]
+    app_password = gmail_account["app_password"]
+    result: list[DeliveryConfirmedInfo] = []
+
+    try:
+        socket.setdefaulttimeout(20)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+        mail.login(email_addr, app_password)
+        mail.select("INBOX", readonly=False)
+
+        criteria = '(UNSEEN FROM "zalando")' if only_unseen else 'FROM "zalando"'
+        _, data = mail.search(None, criteria)
+        ids = data[0].split()
+
+        for num in ids:
+            try:
+                # Najpierw tylko nagłówek (szybko)
+                _, hdr_data = mail.fetch(num, "(RFC822.HEADER)")
+                hdr_msg = email.message_from_bytes(hdr_data[0][1])
+                subject = _decode_header_value(hdr_msg.get("Subject", ""))
+                subj_norm = _normalize(subject)
+
+                # Filtruj po temacie
+                if not any(s in subj_norm for s in _CONFIRMED_SUBJECTS):
+                    continue
+
+                # Pełna treść
+                _, msg_data = mail.fetch(num, "(RFC822)")
+                msg = email.message_from_bytes(msg_data[0][1])
+                to_header = _decode_header_value(msg.get("To") or "")
+                plain, html = _get_text_from_msg(msg)
+
+                info = _parse_delivery_confirmed(plain, html, to_header, email_addr)
+                _logger.logger.info(
+                    "DeliveryConfirmed: konto=%s, order=%s, tracking=%s",
+                    info.zalando_account, info.order_number, info.tracking
+                )
+                result.append(info)
+
+                if only_unseen:
+                    mail.store(num, "+FLAGS", "\\Seen")
+
+            except Exception as ex:
+                _logger.logger.warning("Błąd parsowania maila dostarczonego: %s", ex)
+
+        mail.logout()
+        _logger.logger.info("Gmail IMAP [%s]: %d maili 'dostarczone'", email_addr, len(result))
+
+    except Exception as e:
+        _logger.logger.exception("get_new_delivery_confirmed_emails(%s): %s", email_addr, e)
+
+    return result
+
+
+def get_all_new_delivery_confirmed_emails() -> list[DeliveryConfirmedInfo]:
+    """Sprawdza wszystkie konta i zwraca połączoną listę potwierdzeń dostawy."""
+    accounts = _load_gmail_accounts()
+    all_results: list[DeliveryConfirmedInfo] = []
+    for account in accounts:
+        results = get_new_delivery_confirmed_emails(account)
+        all_results.extend(results)
+    return all_results
+
+
 _DELAY_SUBJECTS = ["aktualizacja dotycząca twojej dostawy", "delivery update"]
 # Frazy w treści potwierdzające opóźnienie
 _DELAY_BODY_PHRASES = [

@@ -896,9 +896,10 @@ async def every_1_minute():
 async def every_1_hour():
     while True:
         try:
-            await mrowka_lib.check_gmail_delivery(bot)   # tracking z maili dostawczych
-            await mrowka_lib.check_gmail_delay(bot)       # opóźnienia dostawy
-            await mrowka_lib.check_imap_invoice(bot)      # faktury do pobrania
+            await mrowka_lib.check_gmail_delivery(bot)            # tracking z maili wysyłkowych
+            await mrowka_lib.check_gmail_delivery_confirmed(bot)  # "Cyfrowy dowód dostawy" → ZREALIZOWANE
+            await mrowka_lib.check_gmail_delay(bot)               # opóźnienia dostawy
+            await mrowka_lib.check_imap_invoice(bot)              # faktury do pobrania
             await asyncio.sleep(3600)
         except Exception as e:
             logger.logger.exception(f"every_1_hour: {e}")

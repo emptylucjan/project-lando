@@ -12,8 +12,8 @@ def run_sfera_action(action: str, payload: dict, sfera_password: str = "") -> di
 
     req = {
         "Action": action,
-        "DbName": "Nexo_eleat teesty kurwa",
-        "DbServer": ".\\INSERTNEXO",
+        "DbName": "Nexo_sport trade sp.z o.o.",
+        "DbServer": "192.168.7.6,1433",
         "SferaPassword": sfera_password
     }
     

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWpf>true</UseWpf>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>warnings</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="InsERT.Moria.API">          <HintPath>..\sfera_dlls\InsERT.Moria.API.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.Sfera">         <HintPath>..\sfera_dlls\InsERT.Moria.Sfera.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.Core">            <HintPath>..\sfera_dlls\InsERT.Mox.Core.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.Product">         <HintPath>..\sfera_dlls\InsERT.Mox.Product.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.Asortymenty">   <HintPath>..\sfera_dlls\InsERT.Moria.Asortymenty.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.Logistyka">     <HintPath>..\sfera_dlls\InsERT.Moria.Logistyka.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.Dokumenty.Core"><HintPath>..\sfera_dlls\InsERT.Moria.Dokumenty.Core.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.Klienci">       <HintPath>..\sfera_dlls\InsERT.Moria.Klienci.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.ModelDanych">   <HintPath>..\sfera_dlls\InsERT.Moria.ModelDanych.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.EntityFrameworkSupport"><HintPath>..\sfera_dlls\InsERT.Mox.EntityFrameworkSupport.dll</HintPath></Reference>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.1.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\sfera_dlls\*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

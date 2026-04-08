@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWpf>true</UseWpf>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>warnings</Nullable>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="InsERT.Moria.API"><HintPath>..\..\.\sfera_dlls\InsERT.Moria.API.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.Sfera"><HintPath>..\..\.\sfera_dlls\InsERT.Moria.Sfera.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.Core"><HintPath>..\..\.\sfera_dlls\InsERT.Mox.Core.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.Product"><HintPath>..\..\.\sfera_dlls\InsERT.Mox.Product.dll</HintPath></Reference>
+    <Reference Include="InsERT.Moria.ModelDanych"><HintPath>..\..\.\sfera_dlls\InsERT.Moria.ModelDanych.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.Security"><HintPath>..\sfera_dlls\InsERT.Mox.Security.dll</HintPath></Reference>
+    <Reference Include="InsERT.Mox.Security.Interfaces"><HintPath>..\sfera_dlls\InsERT.Mox.Security.Interfaces.dll</HintPath></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\sfera_dlls\*.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

@@ -21,9 +21,20 @@ import json as _json
 
 # Ścieżka do Sfera CLI
 _SFERA_EXE = os.path.join(os.path.dirname(__file__), "..", "ReflectSfera", "bin", "Release", "net8.0-windows", "ReflectSfera.exe")
-_SFERA_DB_NAME = "Nexo_eleat teesty kurwa"
-_SFERA_DB_SERVER = r".\INSERTNEXO"
-_SFERA_PASSWORD = ""
+_SFERA_DB_NAME = "Nexo_sport trade sp.z o.o."
+_SFERA_DB_SERVER = r"192.168.7.6,1433"
+_SFERA_PASSWORD = "S2q0L2s024!"
+
+
+
+def _is_login_error(msg: str) -> bool:
+    """Wykrywa błąd braku slotu licencyjnego (za dużo zalogowanych w Nexo)."""
+    indicators = [
+        "logowania operatora",
+        "slotów licencyjnych",
+        "za dużo użytkowników",
+    ]
+    return any(kw in msg for kw in indicators)
 
 
 async def _sfera_cli(action: str, data: dict, timeout: int = 120) -> dict:
@@ -530,11 +541,20 @@ async def _ensure_products_for_order_item(
             if not ensure_res.get("Success"):
                 err_msg = ensure_res.get("Message", "?")
                 logger.logger.warning("EnsureProducts (CSV) failed dla %s: %s", order_item.name, err_msg)
-                await ticket_channel.send(
-                    bot,
-                    f"\u26a0\ufe0f Ostrzeżenie: nie udało się zarejestrować produktów w Subiekcie dla **{order_item.name}**.\n"
-                    f"Błąd: `{err_msg[:200]}`\n_PZ zostanie spróbowane przy potwierdzeniu zamówienia._",
-                )
+                if _is_login_error(err_msg):
+                    await ticket_channel.send(
+                        bot,
+                        f"🔴 **Nexo zajęty — za dużo zalogowanych użytkowników!**\n"
+                        f"Nie udało się zarejestrować produktów dla **{order_item.name}**.\n"
+                        f"⚠️ Proszę wylogować się z Nexo/Subiekt na wszystkich stanowiskach, a następnie ponownie wysłać CSV.\n"
+                        f"_PZ zostanie spróbowane przy potwierdzeniu zamówienia._",
+                    )
+                else:
+                    await ticket_channel.send(
+                        bot,
+                        f"⚠️ Ostrzeżenie: nie udało się zarejestrować produktów w Subiekcie dla **{order_item.name}**.\n"
+                        f"Błąd: `{err_msg[:200]}`\n_PZ zostanie spróbowane przy potwierdzeniu zamówienia._",
+                    )
             else:
                 logger.logger.info("EnsureProducts (CSV) OK dla %s: %d prod.", order_item.name, len(sfera_entries))
     except Exception as e:
@@ -611,11 +631,19 @@ async def _create_pz_for_order_item(
             if not ensure_res.get("Success"):
                 err_msg = ensure_res.get("Message", "?")
                 logger.logger.warning("EnsureProducts failed dla %s: %s", order_item.name, err_msg)
-                await ticket_channel.send(
-                    bot,
-                    f"⚠️ Nie można stworzyć produktów w Subiekcie dla **{order_item.name}** — PZ pominięte.\n"
-                    f"Błąd: `{err_msg[:200]}`",
-                )
+                if _is_login_error(err_msg):
+                    await ticket_channel.send(
+                        bot,
+                        f"🔴 **Nexo zajęty — za dużo zalogowanych użytkowników!**\n"
+                        f"Nie można stworzyć produktów w Subiekcie dla **{order_item.name}** — PZ pominięte.\n"
+                        f"⚠️ Proszę wylogować się z Nexo/Subiekt na wszystkich stanowiskach i ponowić operację.",
+                    )
+                else:
+                    await ticket_channel.send(
+                        bot,
+                        f"⚠️ Nie można stworzyć produktów w Subiekcie dla **{order_item.name}** — PZ pominięte.\n"
+                        f"Błąd: `{err_msg[:200]}`",
+                    )
                 return
 
         mail_email = order_item.mail.mail if order_item.mail else None
@@ -1009,7 +1037,7 @@ async def check_gmail_delivery(bot: commands.Bot) -> None:
                 if uwagi_shipments and oi.pz_sygnatura:
                     upd = await _subiekt_post("/api/pz/update-uwagi", {
                         "PzSygnatura": oi.pz_sygnatura,
-                        "Uwagi": uwagi_shipments,
+                        "UwagiAppend": uwagi_shipments,  # APPEND - nie nadpisuj istniejacych uwag
                     })
                     if upd and upd.get("Success"):
                         logger.logger.info(
@@ -1472,13 +1500,14 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
         )
         return
 
-    msg_parsowana = await reply_target.reply(
+    _dc_raw = await reply_target.reply(
         f"\u2705 Faktura **{pdf_attachment.filename}** sparsowana:\n"
         f"\U0001f4c4 Nr FV: `{inv.invoice_number}`\n"
         f"\U0001f4c5 Data: `{inv.invoice_date}`\n"
         f"\U0001f6cd Order: `{order_name}`\n"
         f"\U0001f504 Aktualizuj\u0119 PZ i tworz\u0119 FZ..."
     )
+    msg_parsowana = dc.message_from_dc_message(_dc_raw)
 
     # Pobierz order_item po order_name (do trackingu)
     _oi = None
@@ -1491,11 +1520,12 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
 
     # 4. Update PZ — NumerZewnetrzny + DataFakturyDostawcy + Tracking w Uwagach
     upd = await _subiekt_post("/api/pz/update-invoice", {
-        "orderName": order_name,
+        "pzSygnatura": _oi.pz_sygnatura if _oi else None,  # priorytet: szukaj po sygnaturze
+        "orderName": order_name,                             # fallback: po Uwagach
         "invoiceNumber": inv.invoice_number,
         "invoiceDate": inv.invoice_date,
         "tracking": _oi.tracking if _oi else None,
-    })
+    }, timeout=120)  # Sfera login ~15-20s + SQL, domyslne 30s to za malo
     if upd:
         logger.logger.info("\u2705 PZ zaktualizowany: NrZew=%s, Data=%s | %s", inv.invoice_number, inv.invoice_date, upd.get("Message", "?"))
     else:
@@ -1515,12 +1545,14 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
     }, timeout=90)
     if fz_result and (fz_result.get("Success") or fz_result.get("documentNumber")):
         fz_num = fz_result.get("DocumentNumber") or fz_result.get("documentNumber", "?")
-        await reply_target.reply(
+        _fz_raw = await reply_target.reply(
             f"\U0001f9fe **FZ `{fz_num}` utworzone!**\n"
             f"NrZewnetrzny: `{inv.invoice_number}` | Order: `{order_name}`"
         )
+        fz_msg = dc.message_from_dc_message(_fz_raw)
 
         # Trigger ZREALIZOWANE jesli wszystkie paczki dostarczone
+        _faktura_msg_to_delete = None
         async with mrowka_data.PisarzMrowka.lock:
             _d2 = await mrowka_data.PisarzMrowka.read(safe=False)
             _oi2 = None
@@ -1536,18 +1568,29 @@ async def handle_faktura_pdf(bot: commands.Bot, message: discord.Message) -> Non
                         "handle_faktura_pdf: %s → ZREALIZOWANE po FZ", order_name
                     )
 
-                # Usun wiadomosc z prosba o fakture (faktura_message_id) — jedyny moment kasowania
+                # Pobierz referencje do wiadomosci z prosba o fakture (do skasowania za 10s)
                 if _oi2.faktura_message_id is not None:
                     try:
                         faktura_ch = await _oi2.get_faktura_channel(bot)
-                        faktura_msg = await faktura_ch.fetch_message(bot, _oi2.faktura_message_id)
-                        if faktura_msg:
-                            await faktura_msg.delete(bot)
+                        _faktura_msg_to_delete = await faktura_ch.fetch_message(bot, _oi2.faktura_message_id)
                         _oi2.faktura_message_id = None
                     except Exception as _fe:
-                        logger.logger.warning("handle_faktura_pdf: nie udalo sie usunac faktura_message: %s", _fe)
+                        logger.logger.warning("handle_faktura_pdf: nie udalo sie pobrac faktura_message: %s", _fe)
 
                 await mrowka_data.PisarzMrowka.write(_d2, safe=False)
+
+        # Usuń WSZYSTKIE wiadomości po 10 sekundach:
+        # fz_msg, msg_parsowana, message (PDF), faktura_msg (konto+haslo)
+        import asyncio as _asyncio
+        await _asyncio.sleep(10)
+        _msgs_to_delete = [fz_msg, msg_parsowana, dc.message_from_dc_message(message)]
+        if _faktura_msg_to_delete is not None:
+            _msgs_to_delete.append(_faktura_msg_to_delete)
+        for _del_msg in _msgs_to_delete:
+            try:
+                await _del_msg.delete(bot)
+            except Exception as _de:
+                logger.logger.warning("handle_faktura_pdf: nie udało się usunąć wiadomości: %s", _de)
     else:
         err = fz_result.get("Message", "?") if fz_result else "brak odpowiedzi"
         await reply_target.reply(

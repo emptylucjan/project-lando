@@ -91,7 +91,8 @@ namespace ReflectSfera
 
     public class UpdateInvoiceRequest
     {
-        public string? OrderName { get; set; }
+        public string? PzSygnatura { get; set; }  // preferowane - szukaj po sygnaturze np. "PV 389/2026"
+        public string? OrderName { get; set; }    // fallback - szukaj po Uwagach
         public string? InvoiceNumber { get; set; }
         public string? InvoiceDate { get; set; }
         public string? Tracking { get; set; }
@@ -162,9 +163,7 @@ namespace ReflectSfera
             AppDomain.CurrentDomain.AssemblyResolve += (s, e) =>
             {
                 var name = new AssemblyName(e.Name).Name + ".dll";
-                var path = Path.Combine(dllDir, name);
-                if (File.Exists(path)) return Assembly.LoadFrom(path);
-                return null;
+                foreach (var dir in new[]{AppContext.BaseDirectory,dllDir}){try{var path=Path.Combine(dir,name);if(File.Exists(path))return Assembly.LoadFrom(path);}catch{}}return null;
             };
 
             try
@@ -205,19 +204,32 @@ namespace ReflectSfera
 
         static CliResponse ProcessAction(CliRequest req)
         {
+            string connStr = $"Server={req.DbServer};Database={req.DbName};User Id=sa;Password={req.SferaPassword};TrustServerCertificate=True;";
+
+            // ── Szybka sciezka SQL-only (bez logowania do Sfery) ──────────────────
+            // UpdateTracking, UpdateInvoice, UpdatePzUwagi uzywaja tylko SQL.
+            // Pomijamy polaczenie Sfery (~15-20s) dla tych akcji.
+            if (req.Action == "UpdateTracking" && req.UpdateTracking != null)
+                return UpdateTracking(connStr, req.UpdateTracking);
+            if (req.Action == "UpdateInvoice" && req.UpdateInvoice != null)
+                return UpdateInvoice(null!, connStr, req.UpdateInvoice);
+            if (req.Action == "UpdatePzUwagi" && req.UpdatePzUwagi != null)
+                return UpdatePzUwagi(connStr, req.UpdatePzUwagi);
+            // ─────────────────────────────────────────────────────────────────────
+
             var dllPath = @"C:\Users\lukko\Desktop\MODULKURIERSKI_PRODUKCJA";
             
             var dane = InsERT.Moria.Sfera.DanePolaczenia.Jawne(req.DbServer, req.DbName, false, "sa", req.SferaPassword, false, null, dllPath);
             var mgr = new InsERT.Moria.Sfera.MenedzerPolaczen();
 
             Uchwyt sfera = mgr.Polacz(dane, InsERT.Mox.Product.ProductId.Subiekt);
-            if (!sfera.ZalogujOperatora("Aleksander PIsiecki", "robocze")) {
-                throw new Exception("BĹ‚Ä…d logowania operatora Aleksander PIsiecki");
+            if (!sfera.ZalogujOperatora("Łukasz Kondrat", "robocze")) {
+                throw new Exception("Blad logowania operatora Lukasz Kondrat");
             }
 
             try
             {
-                string connStr = $"Server={req.DbServer};Database={req.DbName};User Id=sa;Password={req.SferaPassword};TrustServerCertificate=True;";
+                string connStrSfera = $"Server={req.DbServer};Database={req.DbName};User Id=sa;Password={req.SferaPassword};TrustServerCertificate=True;";
 
                 if (req.Action == "EnsureProducts" && req.EnsureProducts != null)
                 {
@@ -225,31 +237,28 @@ namespace ReflectSfera
                     foreach (var pReq in req.EnsureProducts)
                     {
                         string key = $"{pReq.SKU}-{pReq.Size}";
-                        bool created = EnsureProductExists(sfera, pReq, connStr);
+                        bool created = EnsureProductExists(sfera, pReq, connStrSfera);
                         results[key] = created;
                     }
                     return new CliResponse { Success = true, EnsureResults = results };
                 }
                 else if (req.Action == "CreatePZ" && req.PzData != null)
                 {
-                    string docNum = CreatePZ(sfera, req.PzData, connStr);
+                    string docNum = CreatePZ(sfera, req.PzData, connStrSfera);
                     return new CliResponse { Success = true, DocumentNumber = docNum };
                 }
-                else if (req.Action == "UpdateTracking" && req.UpdateTracking != null)
+                else if (req.Action == "UpdateTracking" || req.Action == "UpdateInvoice")
                 {
-                    return UpdateTracking(connStr, req.UpdateTracking);
-                }
-                else if (req.Action == "UpdateInvoice" && req.UpdateInvoice != null)
-                {
-                    return UpdateInvoice(sfera, connStr, req.UpdateInvoice);
+                    // Juz obsluzzone w SQL-only fast path powyzej (nigdy tu nie dotrze)
+                    return new CliResponse { Success = false, Message = "Nieoczekiwany path" };
                 }
                 else if (req.Action == "AcceptPZ" && req.AcceptPz != null)
                 {
-                    return AcceptPZ(sfera, connStr, req.AcceptPz);
+                    return AcceptPZ(sfera, connStrSfera, req.AcceptPz);
                 }
                 else if (req.Action == "CreateFZ" && req.FzData != null)
                 {
-                    string docNum = CreateFZ(sfera, connStr, req.FzData);
+                    string docNum = CreateFZ(sfera, connStrSfera, req.FzData);
                     return new CliResponse { Success = true, DocumentNumber = docNum };
                 }
                 else if (req.Action == "CreateZK" && req.ZkData != null)
@@ -259,21 +268,21 @@ namespace ReflectSfera
                 }
                 else if (req.Action == "UpdatePzPositions" && req.UpdatePzData != null)
                 {
-                    var msg = UpdatePzPositions(sfera, connStr, req.UpdatePzData);
+                    var msg = UpdatePzPositions(sfera, connStrSfera, req.UpdatePzData);
                     return new CliResponse { Success = true, Message = msg };
                 }
                 else if (req.Action == "TestFZ" && req.TestFz != null)
                 {
-                    return TestFZ(sfera, connStr, req.TestFz);
+                    return TestFZ(sfera, connStrSfera, req.TestFz);
                 }
                 else if (req.Action == "UpdatePzUwagi" && req.UpdatePzUwagi != null)
                 {
-                    return UpdatePzUwagi(connStr, req.UpdatePzUwagi);
+                    return UpdatePzUwagi(connStrSfera, req.UpdatePzUwagi);
                 }
                 else if (req.Action == "CreateFZByPz" && req.CreateFzByPz != null)
                 {
                     // Produkcyjny alias — ta sama logika co TestFZ (PzSygnatura-based)
-                    return TestFZ(sfera, connStr, req.CreateFzByPz);
+                    return TestFZ(sfera, connStrSfera, req.CreateFzByPz);
                 }
                 else
                 {
@@ -516,14 +525,21 @@ namespace ReflectSfera
             dynamic pz = pzMgr.UtworzPrzyjecieZewnetrzneVAT();
 
 
-            // Ustaw dostawcę — próbuj PodmiotyDokumentu, fallback na Dane.Podmiot
+            // Ustaw dostawce - szukaj po NIP (Zalando SE = 5263086183) lub NazwaSkrocona
             var podmioty = sfera.PodajObiektTypu<IPodmioty>();
             string? dostawcaSymbol = null;
             dynamic? dostawcaObj = null;
+            string dostawcaNIP = req.DostawcaNip ?? "5263086183";
             foreach (dynamic p in podmioty.Dane.Wszystkie())
             {
-                try { dostawcaSymbol = p.Sygnatura.PelnaSygnatura.ToString(); dostawcaObj = p; break; } catch { }
+                try {
+                    string pNIP = p.NIP?.ToString() ?? "";
+                    string pNazwa = p.NazwaSkrocona?.ToString() ?? "";
+                    if (pNIP == dostawcaNIP || pNazwa == "Zalando SE") { dostawcaSymbol = p.Sygnatura.PelnaSygnatura.ToString(); dostawcaObj = p; break; }
+                } catch { }
             }
+            // Fallback: pierwszy jezeli nie znaleziono Zalando SE
+            if (dostawcaObj == null) foreach (dynamic p in podmioty.Dane.Wszystkie()) { try { dostawcaSymbol = p.Sygnatura.PelnaSygnatura.ToString(); dostawcaObj = p; break; } catch { } }
             if (dostawcaSymbol != null)
             {
                 bool podmiotSet = false;
@@ -632,6 +648,24 @@ namespace ReflectSfera
 
 
             try { pz.Przelicz(); } catch { }
+
+            // Dodaj platnosc: Przelew odroczone (przez Platnosci.DodajPlatnoscOdroczona - jedyna metoda ktora dziala w GUI)
+            try {
+                var fpMgr2 = GetManager(sfera, "IFormyPlatnosci");
+                dynamic przelew2 = null;
+                // Proba 1: DaneDomyslne.Przelew
+                try { przelew2 = fpMgr2.DaneDomyslne.Przelew; } catch { }
+                // Proba 2: szukaj po Id=2
+                if (przelew2 == null) foreach (dynamic fp in fpMgr2.Dane.Wszystkie())
+                    try { if ((int)fp.Id == 2) { przelew2 = fp; break; } } catch { }
+                if (przelew2 != null) {
+                    decimal kwotaPZ = 0;
+                    try { kwotaPZ = (decimal)pz.Dane.KwotaDoZaplaty; } catch { }
+                    if (kwotaPZ > 0)
+                        try { pz.Platnosci.DodajPlatnoscOdroczona(przelew2, kwotaPZ); } catch { }
+                }
+            } catch { }
+
             if (!pz.MoznaZapisac)
             {
                 // Zbierz wszystkie dostępne info o błędzie
@@ -682,6 +716,15 @@ namespace ReflectSfera
                                 "UPDATE ModelDanychContainer.Dokumenty SET StatusDokumentuId=14, FormaPlatnosciId=2, DzienUstaleniaTerminuPlatnosci=14 WHERE Id=@id", connStat);
                             cmdStat.Parameters.AddWithValue("@id", realDocId.Value);
                             cmdStat.ExecuteNonQuery();
+
+                        // INSERT FormyPlatnosciDokumentu: Przelew(Id=2), Udzial=1.0 (100%)
+                        try {
+                            using var fpCmd = new SqlCommand(
+                                "DELETE FROM ModelDanychContainer.FormyPlatnosciDokumentu WHERE Dokument_Id=@id; " +
+                                "INSERT INTO ModelDanychContainer.FormyPlatnosciDokumentu (Dokument_Id, FormaPlatnosci_Id, Udzial) VALUES (@id, 2, CAST(1.0 AS DECIMAL(6,4)))", connStat);
+                            fpCmd.Parameters.AddWithValue("@id", realDocId.Value);
+                            fpCmd.ExecuteNonQuery();
+                        } catch { }
                         } catch { }
 
 
@@ -805,16 +848,35 @@ namespace ReflectSfera
             using var conn = new SqlConnection(connStr);
             conn.Open();
 
-            // Znajdz Id i NumerWewnetrzny dokumentu PZ po uwagach
-            using var findCmd = new SqlCommand(@"
-                SELECT TOP 1 d.Id, d.NumerWewnetrzny_PelnaSygnatura FROM ModelDanychContainer.Dokumenty d
-                WHERE d.Uwagi LIKE @orderName ORDER BY d.DataWprowadzenia DESC", conn);
-            findCmd.Parameters.AddWithValue("@orderName", $"%{req.OrderName}%");
+            // Znajdz PZ:
+            // 1. Priorytet: PzSygnatura (dokładne trafienie, niezawodne)
+            // 2. Fallback: Uwagi LIKE '%OrderName%' + filtr 'PV %'
             int? docId = null;
             string docNumer = null;
-            using (var reader = findCmd.ExecuteReader())
+
+            if (!string.IsNullOrWhiteSpace(req.PzSygnatura))
             {
-                if (reader.Read()) { docId = reader.GetInt32(0); try { docNumer = reader.GetString(1); } catch { } }
+                // Normalizuj: "PV389/2026" -> "PV 389/2026"
+                var sygNorm = System.Text.RegularExpressions.Regex.Replace(req.PzSygnatura.Trim(), @"^([A-Z]+)(\d)", "$1 $2");
+                using var findBySyg = new SqlCommand(
+                    "SELECT TOP 1 Id, NumerWewnetrzny_PelnaSygnatura FROM ModelDanychContainer.Dokumenty WHERE NumerWewnetrzny_PelnaSygnatura IN (@s1,@s2)", conn);
+                findBySyg.Parameters.AddWithValue("@s1", sygNorm);
+                findBySyg.Parameters.AddWithValue("@s2", req.PzSygnatura.Trim());
+                using var rdr = findBySyg.ExecuteReader();
+                if (rdr.Read()) { docId = rdr.GetInt32(0); try { docNumer = rdr.GetString(1); } catch { } }
+            }
+
+            if (!docId.HasValue && !string.IsNullOrWhiteSpace(req.OrderName))
+            {
+                // Fallback: szukaj po Uwagach (tylko PZ, filtr 'PV %')
+                using var findByUwagi = new SqlCommand(@"
+                    SELECT TOP 1 Id, NumerWewnetrzny_PelnaSygnatura FROM ModelDanychContainer.Dokumenty
+                    WHERE Uwagi LIKE @orderName
+                      AND NumerWewnetrzny_PelnaSygnatura LIKE 'PV %'
+                    ORDER BY DataWprowadzenia DESC", conn);
+                findByUwagi.Parameters.AddWithValue("@orderName", $"%{req.OrderName}%");
+                using var rdr2 = findByUwagi.ExecuteReader();
+                if (rdr2.Read()) { docId = rdr2.GetInt32(0); try { docNumer = rdr2.GetString(1); } catch { } }
             }
 
             if (!docId.HasValue)
@@ -1284,6 +1346,18 @@ namespace ReflectSfera
             // 6. Przelicz
             try { fz.Przelicz(); log.Append("Przelicz OK | "); } catch (Exception ex) { log.Append($"Przelicz ERR:{ex.Message} | "); }
 
+            // 6b. Ustaw FormaPlatnosci = Przelew (Id=2) PO Przelicz - Przelicz resetuje platnosc
+            try {
+                var formyPlatnosci = GetManager(sfera, "IFormyPlatnosci");
+                dynamic przelew = null;
+                foreach (dynamic fp in formyPlatnosci.Dane.Wszystkie())
+                    try { if ((int)fp.Id == 2) { przelew = fp; break; } } catch { }
+                if (przelew != null) {
+                    try { fz.Dane.FormaPlatnosci = przelew; } catch { }
+                    try { fz.Dane.DzienTerminuPlatnosci = 14; } catch { }
+                    log.Append("FormaPlatnosci=Przelew(po Przelicz) | ");
+                }
+            } catch { }
             // 7. Ustaw daty PO Przelicz
             try { fz.Dane.DataDokumentu = invoiceDate; } catch { }
             try { fz.Dane.DataFakturyDostawcy = invoiceDate; } catch { }
@@ -1296,17 +1370,17 @@ namespace ReflectSfera
             try { dataFakt = ((DateTime)fz.Dane.DataFakturyDostawcy).ToString("yyyy-MM-dd"); } catch { }
             log.Append($"DataDokumentu={dataDok} DataOryginal={dataOryg} DataFaktury={dataFakt} | ");
 
-            // 8. MoznaZapisac?
+            // 8. MoznaZapisac? - DokumentZakupuBO moze miec to na Dane lub bezposrednio
             bool mozna = false;
             var bledy = new System.Text.StringBuilder();
-            try { mozna = (bool)fz.MoznaZapisac; } catch { }
+            try { mozna = (bool)fz.Dane.MoznaZapisac; } catch { }
+            if (!mozna) try { mozna = (bool)fz.MoznaZapisac; } catch { }
+            // Jesli nadal false - sprubuj bezposrednio Zapisz (czasem MoznaZapisac rzuca na nowym dok)
             if (!mozna)
             {
-                try { foreach (dynamic b in fz.Bledy) bledy.Append(b?.ToString()).Append("; "); } catch { }
-                try { ((IDisposable)fz).Dispose(); } catch { }
-                return new CliResponse { Success = false, Message = $"MoznaZapisac=false | {log} | Bledy: {bledy}" };
+                try { bledy.Append("Dane.MoznaZapisac=false - probuje Zapisz bezposrednio"); } catch { }
+                // NIE przerywamy - idziemy dalej do Zapisz()
             }
-
             // 9. Zapisz
             bool zapisano = false;
             try { zapisano = fz.Zapisz(); } catch (Exception ex) { return new CliResponse { Success = false, Message = $"Zapisz ERR: {ex.Message} | {log}" }; }
@@ -1333,14 +1407,27 @@ namespace ReflectSfera
                     r.Close();
 
                     // 11. SQL: ustaw DataWydaniaWystawienia = invoiceDate + reset status do 21 (Odlozenie dla FZ)
+                    // SQL: DataWydaniaWystawienia + Status=21 + FormaPlatnosci=Przelew(2) + wyłącz KSeF (FormaFaktury=0)
                     using (var dtCmd = new SqlCommand(
-                        "UPDATE ModelDanychContainer.Dokumenty SET DataWydaniaWystawienia=@dt, StatusDokumentuId=21 WHERE Id=@id", conn2))
+                        "UPDATE ModelDanychContainer.Dokumenty SET " +
+                        "DataWydaniaWystawienia=@dt, StatusDokumentuId=21, " +
+                        "FormaPlatnosciId=2, DzienUstaleniaTerminuPlatnosci=14, " +
+                        "FormaFaktury=0, ZgodnyZeSchematemKsef=0 " +
+                        "WHERE Id=@id", conn2))
                     {
                         dtCmd.Parameters.AddWithValue("@dt", invoiceDate.Date);
                         dtCmd.Parameters.AddWithValue("@id", fzDocId2);
                         dtCmd.ExecuteNonQuery();
                     }
                     log.Append($"SQL DataWydaniaWystawienia={invoiceDate:yyyy-MM-dd} + Status=21 OK | ");
+                    // SQL: FormyPlatnosciDokumentu - Przelew(Id=2), Udzial=1.0
+                    try {
+                        using var fpFzCmd = new SqlCommand(
+                            "DELETE FROM ModelDanychContainer.FormyPlatnosciDokumentu WHERE Dokument_Id=@id; " +
+                            "INSERT INTO ModelDanychContainer.FormyPlatnosciDokumentu (Dokument_Id, FormaPlatnosci_Id, Udzial) VALUES (@id, 2, CAST(1.0 AS DECIMAL(6,4)))", conn2);
+                        fpFzCmd.Parameters.AddWithValue("@id", fzDocId2);
+                        fpFzCmd.ExecuteNonQuery();
+                    } catch { }
 
                     // 12. Odczyt po UPDATE — prawdziwy stan bazy
                     using var verCmd = new SqlCommand(
